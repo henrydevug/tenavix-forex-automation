@@ -1,0 +1,53 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+*.p12
+*.pfx
+credentials.json
+secrets/
+
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+.pub-cache/
+.pub/
+**/doc/api/
+
+# MQL5 compiled binaries and local runtime
+*.ex5
+*.ex4
+*.log
+mt5/Files/
+**/Tester/
+**/Profile/
+
+# Logs and temp
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.swp
+*~
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Coverage / test output
+coverage/
+.test_coverage/
+*.lcov
+
+# Local overrides
+docker-compose.override.yml
+local.properties
