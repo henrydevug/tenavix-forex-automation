@@ -1,0 +1,39 @@
+name: tenavix_server
+description: Tenavix Forex Automation Platform - Backend (Sprint 2)
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  # Core
+  crypto: ^3.0.5
+  uuid: ^4.5.1
+  collection: ^1.19.0
+  meta: ^1.15.0
+  equatable: ^2.0.5
+
+  # Security
+  argon2: ^1.0.1          # Password hashing (Argon2id)
+  dart_jsonwebtoken: ^2.14.1
+
+  # Database
+  postgres: ^3.4.1
+  # Note: In full Serverpod deployment these map to serverpod packages.
+  # We keep direct postgres for transparent migrations & control in Sprint 2.
+
+  # Utilities
+  logging: ^1.3.0
+  intl: ^0.19.0
+  http: ^1.2.2
+
+dev_dependencies:
+  test: ^1.25.8
+  lints: ^5.0.0
+  mocktail: ^1.0.4
+
+# Serverpod note:
+# When moving to full Serverpod hosting, replace the direct postgres driver
+# with serverpod + serverpod_auth packages and generate endpoints.
+# The domain model and service interfaces remain the same.
