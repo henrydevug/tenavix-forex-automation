@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # TENAVIX FOREX AUTOMATION PLATFORM
 
 **Version:** 1.0 (In Development)  
@@ -73,3 +74,7 @@ Trading involves substantial risk of loss. Past performance is not indicative of
 ---
 
 *Maintained according to the Master Software Engineering Prompt for TENAVIX v1.0*
+=======
+# tenavix-forex-automation
+A subscription-based MT5 forex automation platform built with MQL5, Dart, Serverpod and PostgreSQL.
+>>>>>>> origin/main
