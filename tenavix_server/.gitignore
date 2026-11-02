@@ -1,1 +1,5 @@
 .dart_tool/\n.packages\nbuild/\n*.iml
+.dart_tool/
+.packages
+build/
+*.iml

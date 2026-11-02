@@ -28,6 +28,10 @@ dependencies:
   intl: ^0.19.0
   http: ^1.2.2
 
+  # HTTP API
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+
 dev_dependencies:
   test: ^1.25.8
   lints: ^5.0.0

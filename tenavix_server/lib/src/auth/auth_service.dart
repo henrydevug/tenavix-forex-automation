@@ -202,7 +202,7 @@ class AuthService {
     final newHash = tokenService.hashRefreshToken(newRefreshValue);
     final expiresAt = DateTime.now().toUtc().add(tokenService.refreshTokenTtl);
 
-    await refreshTokens.revoke(record.id, replacedByTokenId: newRefreshId);
+    // Insert new token first so FK on replaced_by_token_id is satisfied.
     await refreshTokens.save(RefreshTokenRecord(
       id: newRefreshId,
       userId: withRoles.id,
@@ -212,6 +212,7 @@ class AuthService {
       userAgent: userAgent,
       ipAddress: ipAddress,
     ));
+    await refreshTokens.revoke(record.id, replacedByTokenId: newRefreshId);
 
     final accessToken = tokenService.createAccessToken(
       userId: withRoles.id,
