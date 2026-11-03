@@ -6,7 +6,7 @@
 
 Tenavix is a subscription-based forex trading automation platform that connects MetaTrader 5 accounts to a risk-controlled Expert Advisor (EA).
 
-The platform combines MQL5, Dart, Serverpod and PostgreSQL to provide automated trade execution, centralized subscription management, account isolation and risk controls.
+The platform combines an MQL5 Expert Advisor, a Dart/Shelf HTTP backend, PostgreSQL, and an HTML/CSS/JavaScript web frontend to provide automated trade execution, centralized subscription management, account isolation and risk controls. Serverpod remains part of the approved long-term architecture (see ADR-006); the current implementation uses a modular Shelf API layer.
 
 Its engineering priorities are **safety**, **auditability**, **reliability** and **disciplined execution** rather than profit claims.
 
@@ -32,7 +32,7 @@ Its engineering priorities are **safety**, **auditability**, **reliability** and
 | ---------------- | -------------------------- |
 | Trading platform | MetaTrader 5               |
 | Expert Advisor   | MQL5                       |
-| Backend          | Dart and Serverpod         |
+| Backend          | Dart with Shelf HTTP API (Serverpod planned per ADR-006) |
 | Database         | PostgreSQL                 |
 | Web frontend     | HTML5, CSS3 and JavaScript |
 | Infrastructure   | Docker and Docker Compose  |
@@ -49,7 +49,7 @@ tenavix/
 ├── mt5/                     # MQL5 Expert Advisor
 │   ├── Experts/
 │   └── Include/Tenavix/
-├── tenavix_server/          # Dart / Serverpod backend
+├── tenavix_server/          # Dart / Shelf HTTP backend
 ├── tenavix_web/             # Responsive web frontend
 ├── infrastructure/          # Deployment configurations
 ├── scripts/                 # Utility scripts
