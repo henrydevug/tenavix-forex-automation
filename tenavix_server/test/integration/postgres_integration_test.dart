@@ -20,13 +20,9 @@ void main() {
   late SubscriptionService subs;
 
   setUpAll(() async {
-    pool = PostgresPool(
-      host: 'localhost',
-      database: 'tenavix',
-      username: 'tenavix',
-      password: 'tenavix_dev_secret',
-    );
-    // Smoke-check connection
+    // Credentials must come from environment (see .env.example).
+    // Example: TENAVIX_DB_PASSWORD=... dart test test/integration
+    pool = PostgresPool.fromEnvironment();
     final conn = await pool.connection;
     await conn.execute('SELECT 1');
   });

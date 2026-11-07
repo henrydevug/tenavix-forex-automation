@@ -1,5 +1,4 @@
 /// Tenavix Server library exports (Sprint 2).
-library tenavix_server;
 
 export 'src/common/types.dart';
 export 'src/users/user.dart';

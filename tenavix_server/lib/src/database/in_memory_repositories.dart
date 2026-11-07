@@ -2,7 +2,6 @@ import '../auth/auth_service.dart';
 import '../auth/token_service.dart';
 import '../audit/audit_service.dart';
 import '../users/user.dart';
-import '../common/types.dart';
 
 /// In-memory implementations for unit & integration tests.
 /// Production will use PostgreSQL implementations of the same interfaces.
