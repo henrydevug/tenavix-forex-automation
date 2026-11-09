@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Log in — Tenavix</title>
+  <link rel="stylesheet" href="../assets/css/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="../index.html"><span class="brand-mark">T</span> Tenavix</a>
+      <nav class="nav-links">
+        <a href="register.html">Register</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="auth-shell">
+    <div class="card auth-card">
+      <h1 style="margin-top:0;font-size:1.4rem">Log in</h1>
+      <p class="muted">Access your trader dashboard.</p>
+      <div id="error" class="form-error" role="alert"></div>
+      <form id="login-form" novalidate>
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" />
+        <button class="btn btn-primary" type="submit" style="width:100%">Log in</button>
+      </form>
+      <p class="muted" style="margin-top:1rem;margin-bottom:0">
+        No account? <a href="register.html">Register</a>
+      </p>
+      <p class="hint" style="margin-top:1rem">API: <span id="api-base" class="mono"></span></p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { api } from '../assets/js/api.js';
+    import { getApiBase } from '../assets/js/config.js';
+    import { redirectIfAuthenticated } from '../assets/js/auth-guard.js';
+
+    redirectIfAuthenticated('dashboard.html');
+    document.getElementById('api-base').textContent = getApiBase();
+
+    const form = document.getElementById('login-form');
+    const err = document.getElementById('error');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.classList.remove('visible');
+      const email = form.email.value.trim();
+      const password = form.password.value;
+      if (!email || password.length < 8) {
+        err.textContent = 'Enter a valid email and password (min 8 characters).';
+        err.classList.add('visible');
+        return;
+      }
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        const data = await api.login({ email, password });
+        api.saveSession(data);
+        const params = new URLSearchParams(location.search);
+        const next = params.get('next');
+        location.replace(next && next.startsWith('/') ? next : 'dashboard.html');
+      } catch (ex) {
+        err.textContent = ex.message || 'Login failed';
+        err.classList.add('visible');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

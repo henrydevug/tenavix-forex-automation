@@ -148,7 +148,8 @@ class TenavixApi {
         environment: AccountEnvironmentX.fromString(envStr),
         currency: body['currency'] as String?,
       );
-      return _json(201, account.toPublicJson());
+      final payload = await accounts.accountPublicWithLicense(account);
+      return _json(201, payload);
     } on AppException catch (e) {
       return _error(e);
     }
@@ -158,7 +159,11 @@ class TenavixApi {
     try {
       final user = await _requireUser(req);
       final list = await accounts.listMyAccounts(user);
-      return _json(200, {'accounts': list.map((a) => a.toPublicJson()).toList()});
+      final enriched = <Map<String, dynamic>>[];
+      for (final a in list) {
+        enriched.add(await accounts.accountPublicWithLicense(a));
+      }
+      return _json(200, {'accounts': enriched});
     } on AppException catch (e) {
       return _error(e);
     }
@@ -168,7 +173,7 @@ class TenavixApi {
     try {
       final user = await _requireUser(req);
       final account = await accounts.getAccount(caller: user, accountId: id);
-      return _json(200, account.toPublicJson());
+      return _json(200, await accounts.accountPublicWithLicense(account));
     } on AppException catch (e) {
       return _error(e);
     }

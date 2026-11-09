@@ -152,6 +152,17 @@ class AccountService {
     return account;
   }
 
+  /// Public account JSON including license key for the owner dashboard / EA setup.
+  Future<Map<String, dynamic>> accountPublicWithLicense(TradingAccount account) async {
+    final json = account.toPublicJson();
+    final license = await licenses.findByAccountId(account.id);
+    if (license != null) {
+      json['licenseKey'] = license.licenseKey;
+      json['licenseStatus'] = license.status.value;
+    }
+    return json;
+  }
+
   /// Validate license for EA. Returns structured result.
   /// Does NOT control customer funds (FR-025).
   Future<Map<String, dynamic>> validateLicense({

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin — Tenavix</title>
+  <link rel="stylesheet" href="../assets/css/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="../index.html"><span class="brand-mark">T</span> Tenavix</a>
+      <nav class="side-nav">
+        <a href="dashboard.html">Trader dashboard</a>
+        <a href="admin.html" class="active">Admin</a>
+        <button type="button" id="logout-btn">Log out</button>
+      </nav>
+    </aside>
+    <div class="main">
+      <h1 class="page-title">Administration</h1>
+      <p class="muted" id="welcome">ADMIN only — enforced by backend RBAC.</p>
+
+      <section class="card" style="margin-bottom:1.25rem">
+        <h2 style="margin-top:0;font-size:1.1rem">Suspend user</h2>
+        <p class="muted">
+          Backend endpoint: <span class="mono">POST /api/v1/admin/users/&lt;id&gt;/suspend</span>.
+          User list enumeration is not yet exposed by the API; enter a known user UUID.
+        </p>
+        <div id="error" class="form-error" role="alert"></div>
+        <div id="success" class="form-success" role="status"></div>
+        <form id="suspend-form">
+          <label for="userId">Target user ID</label>
+          <input id="userId" class="mono" required placeholder="uuid" />
+          <label for="reason">Reason (optional)</label>
+          <input id="reason" />
+          <button class="btn btn-danger" type="submit">Suspend user</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2 style="margin-top:0;font-size:1.1rem">API coverage gaps</h2>
+        <ul class="muted">
+          <li>List all users — not implemented on backend</li>
+          <li>List all trading accounts (global) — not implemented</li>
+          <li>License force-revoke UI beyond suspend — not implemented</li>
+          <li>Audit log viewer — audit writes exist; read API not exposed</li>
+        </ul>
+        <p class="muted">Do not simulate these operations in the UI.</p>
+      </section>
+    </div>
+  </div>
+
+  <script type="module">
+    import { api } from '../assets/js/api.js';
+    import { requireAdmin } from '../assets/js/auth-guard.js';
+
+    const user = requireAdmin('login.html');
+    if (!user) throw new Error('admin redirect');
+
+    document.getElementById('welcome').textContent = `Admin session: ${user.email}`;
+
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+      try { await api.logout(); } catch { api.clearSession(); }
+      location.replace('login.html');
+    });
+
+    document.getElementById('suspend-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('error');
+      const ok = document.getElementById('success');
+      err.classList.remove('visible');
+      ok.classList.remove('visible');
+      const userId = document.getElementById('userId').value.trim();
+      const reason = document.getElementById('reason').value.trim() || undefined;
+      try {
+        await api.suspendUser(userId, reason);
+        ok.textContent = `User ${userId} suspended.`;
+        ok.classList.add('visible');
+      } catch (ex) {
+        err.textContent = ex.message || 'Suspend failed (need ADMIN role and valid id)';
+        err.classList.add('visible');
+      }
+    });
+  </script>
+</body>
+</html>

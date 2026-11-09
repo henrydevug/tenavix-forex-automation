@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tenavix — Disciplined Forex Automation</title>
+  <meta name="description" content="Subscription-based MetaTrader 5 automation with local risk controls, licensing, and account isolation." />
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="index.html"><span class="brand-mark">T</span> Tenavix</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#security">Security</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a href="pages/login.html">Log in</a>
+        <a class="btn btn-primary btn-sm" href="pages/register.html">Get started</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <span class="badge">DEMO / SIMULATION FIRST</span>
+        <h1>Automation with risk discipline, not hype.</h1>
+        <p class="lead">
+          Connect MetaTrader 5 accounts to a licensed Expert Advisor. Enforce stop-loss,
+          position sizing, daily loss limits and emergency stop — locally in the terminal.
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="pages/register.html">Create account</a>
+          <a class="btn btn-ghost" href="pages/login.html">Trader login</a>
+        </div>
+        <div class="disclaimer" role="note">
+          Tenavix does not guarantee profits. Live trading stays disabled until validation
+          and explicit release authorization. Trading involves substantial risk of loss.
+        </div>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="container">
+        <h2>Built for controlled execution</h2>
+        <p class="section-sub">Addresses emotional trading, weak risk rules, and inconsistent strategy application.</p>
+        <div class="grid-3">
+          <article class="card">
+            <h3>Local risk engine</h3>
+            <p>Lot sizing, SL/TP, trailing stops, max daily loss and emergency stop run inside the MT5 EA — even if the backend is offline.</p>
+          </article>
+          <article class="card">
+            <h3>Per-account licensing</h3>
+            <p>Each connected MT5 account receives a license key gated by subscription. Broker passwords are never stored by Tenavix.</p>
+          </article>
+          <article class="card">
+            <h3>Account isolation</h3>
+            <p>Traders only see their accounts. Admin operations are server-side RBAC protected.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="security">
+      <div class="container">
+        <h2>Security posture</h2>
+        <p class="section-sub">Authentication, authorization and auditability are first-class requirements.</p>
+        <div class="grid-3">
+          <article class="card">
+            <h3>Credentials</h3>
+            <p>Passwords hashed with Argon2id. JWT access tokens with rotating refresh tokens.</p>
+          </article>
+          <article class="card">
+            <h3>No broker secrets</h3>
+            <p>The backend never receives or stores broker trading passwords. Execution stays in MT5.</p>
+          </article>
+          <article class="card">
+            <h3>Audit trail</h3>
+            <p>Important security and administrative events are recorded for review.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="pricing">
+      <div class="container">
+        <h2>Simple subscription</h2>
+        <p class="section-sub">Standard plan priced per connected MT5 account.</p>
+        <div class="grid-3">
+          <article class="card">
+            <h3>Standard</h3>
+            <p class="price">$2 <span>/ account / month</span></p>
+            <p>License key, subscription gate, dashboard access, DEMO-first automation path.</p>
+            <p style="margin-top:1rem"><a class="btn btn-primary" href="pages/register.html">Start free registration</a></p>
+            <p class="hint">Payment provider integration is staged; owners can activate subscriptions for DEMO testing via the API.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="faq">
+      <div class="container">
+        <h2>FAQ</h2>
+        <details>
+          <summary>Does Tenavix guarantee profits?</summary>
+          <p class="muted">No. The product focuses on disciplined automation and risk controls, not performance claims.</p>
+        </details>
+        <details>
+          <summary>Is live trading enabled by default?</summary>
+          <p class="muted">No. DEMO / SIMULATION is the default. Live trading requires explicit authorization after validation.</p>
+        </details>
+        <details>
+          <summary>Where do risk controls run?</summary>
+          <p class="muted">Primarily in the local MQL5 Expert Advisor so emergency protection is not dependent on backend availability.</p>
+        </details>
+        <details>
+          <summary>How do I get a license key?</summary>
+          <p class="muted">Register, log in, and add a trading account. The backend issues a license key for that MT5 account number.</p>
+        </details>
+      </div>
+    </section>
+
+    <section id="contact">
+      <div class="container">
+        <h2>Contact</h2>
+        <p class="section-sub">Engineering and product inquiries: use your project GitHub repository issues for Tenavix development coordination.</p>
+        <p><a href="https://github.com/henrydevug/tenavix-forex-automation" rel="noopener">github.com/henrydevug/tenavix-forex-automation</a></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <strong>Tenavix</strong> — Ingenuity and Lucidity in Financial Technology.<br />
+      Proprietary. Unauthorized commercial use prohibited. Trading involves risk of financial loss.
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard — Tenavix</title>
+  <link rel="stylesheet" href="../assets/css/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="../index.html"><span class="brand-mark">T</span> Tenavix</a>
+      <nav class="side-nav">
+        <a href="dashboard.html" class="active">Overview</a>
+        <a href="#accounts">Trading accounts</a>
+        <a href="#connect">Connect account</a>
+        <a href="#activity">Activity</a>
+        <a href="#settings">Settings</a>
+        <a id="admin-link" class="hidden" href="admin.html">Admin</a>
+        <button type="button" id="logout-btn">Log out</button>
+      </nav>
+    </aside>
+    <div class="main">
+      <h1 class="page-title">Trader dashboard</h1>
+      <p class="muted" id="welcome">Loading…</p>
+
+      <div class="stats" id="stats">
+        <div class="stat"><div class="label">Accounts</div><div class="value" id="stat-accounts">—</div></div>
+        <div class="stat"><div class="label">Subscription</div><div class="value" id="stat-sub">—</div></div>
+        <div class="stat"><div class="label">Environment</div><div class="value warn">DEMO default</div></div>
+        <div class="stat"><div class="label">Live trading</div><div class="value ok">Disabled</div></div>
+      </div>
+
+      <section id="accounts" class="card" style="margin-bottom:1.25rem">
+        <h2 style="margin-top:0;font-size:1.1rem">Trading accounts</h2>
+        <div id="accounts-loading" class="loading">Loading accounts…</div>
+        <div id="accounts-empty" class="empty hidden">No connected accounts yet. Register an MT5 account below.</div>
+        <div class="table-wrap">
+          <table id="accounts-table" class="hidden">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>MT5 number</th>
+                <th>Env</th>
+                <th>License</th>
+                <th>Subscription</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="connect" class="card" style="margin-bottom:1.25rem">
+        <h2 style="margin-top:0;font-size:1.1rem">Connect MT5 account</h2>
+        <p class="muted">Broker passwords are never sent to Tenavix. Provide the account number only.</p>
+        <div id="connect-error" class="form-error" role="alert"></div>
+        <div id="connect-success" class="form-success" role="status"></div>
+        <form id="connect-form">
+          <label for="brokerAccountNumber">Broker account number</label>
+          <input id="brokerAccountNumber" required pattern="[0-9A-Za-z\-]+" />
+          <label for="brokerServer">Broker server (optional)</label>
+          <input id="brokerServer" />
+          <label for="accountName">Display name (optional)</label>
+          <input id="accountName" />
+          <label for="environment">Environment</label>
+          <select id="environment">
+            <option value="demo" selected>DEMO</option>
+            <option value="live" disabled>LIVE (disabled in v1)</option>
+          </select>
+          <button class="btn btn-primary" type="submit">Register account</button>
+        </form>
+      </section>
+
+      <section id="activity" class="card" style="margin-bottom:1.25rem">
+        <h2 style="margin-top:0;font-size:1.1rem">Trading activity</h2>
+        <div class="empty">
+          Trade execution history is not exposed by the backend in the current sprint.
+          Activity remains local to MetaTrader 5 / Strategy Tester.
+        </div>
+      </section>
+
+      <section id="settings" class="card">
+        <h2 style="margin-top:0;font-size:1.1rem">Risk &amp; emergency controls</h2>
+        <p class="muted">
+          Stop-loss, take-profit, trailing stop, position sizing, max daily loss and emergency stop
+          are enforced by the <strong>local MQL5 Expert Advisor</strong>. There is no backend endpoint
+          to remotely disable those protections — by design.
+        </p>
+        <div class="disclaimer">Use MetaTrader DEMO while validating. Do not enable live trading.</div>
+      </section>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script type="module">
+    import { api } from '../assets/js/api.js';
+    import { requireAuth } from '../assets/js/auth-guard.js';
+
+    const user = requireAuth('login.html');
+    if (!user) throw new Error('auth redirect');
+
+    document.getElementById('welcome').textContent =
+      `Signed in as ${user.email}${user.fullName ? ` (${user.fullName})` : ''}`;
+
+    if ((user.roles || []).includes('ADMIN')) {
+      document.getElementById('admin-link').classList.remove('hidden');
+    }
+
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+      try { await api.logout(); } catch { api.clearSession(); }
+      location.replace('login.html');
+    });
+
+    const tbody = document.querySelector('#accounts-table tbody');
+    const table = document.getElementById('accounts-table');
+    const empty = document.getElementById('accounts-empty');
+    const loading = document.getElementById('accounts-loading');
+
+    async function loadAccounts() {
+      loading.classList.remove('hidden');
+      table.classList.add('hidden');
+      empty.classList.add('hidden');
+      tbody.innerHTML = '';
+      try {
+        const data = await api.listAccounts();
+        const accounts = data.accounts || [];
+        document.getElementById('stat-accounts').textContent = String(accounts.length);
+        let anyActiveSub = false;
+        for (const a of accounts) {
+          let subLabel = '—';
+          try {
+            const sub = await api.getSubscription(a.id);
+            if (sub && sub.status === 'active') {
+              subLabel = 'Active';
+              anyActiveSub = true;
+            } else if (sub && sub.active === false) {
+              subLabel = 'Inactive';
+            } else if (sub && sub.status) {
+              subLabel = sub.status;
+            }
+          } catch {
+            subLabel = 'Unknown';
+          }
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${escapeHtml(a.accountName || '—')}</td>
+            <td class="mono">${escapeHtml(a.brokerAccountNumber || '')}</td>
+            <td>${escapeHtml((a.environment || 'demo').toUpperCase())}</td>
+            <td class="mono">${escapeHtml(a.licenseKey || a.license?.key || '—')}</td>
+            <td>${escapeHtml(subLabel)}</td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-activate="${a.id}">Activate sub</button></td>`;
+          tbody.appendChild(tr);
+        }
+        document.getElementById('stat-sub').textContent = anyActiveSub ? 'Active' : 'None active';
+        document.getElementById('stat-sub').className = 'value ' + (anyActiveSub ? 'ok' : 'warn');
+        loading.classList.add('hidden');
+        if (accounts.length === 0) empty.classList.remove('hidden');
+        else table.classList.remove('hidden');
+      } catch (ex) {
+        loading.textContent = ex.message || 'Failed to load accounts';
+      }
+    }
+
+    tbody.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-activate]');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        await api.activateSubscription(btn.getAttribute('data-activate'));
+        showToast('Subscription activated for DEMO testing', 'success');
+        await loadAccounts();
+      } catch (ex) {
+        showToast(ex.message || 'Activation failed', 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('connect-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('connect-error');
+      const ok = document.getElementById('connect-success');
+      err.classList.remove('visible');
+      ok.classList.remove('visible');
+      try {
+        const account = await api.createAccount({
+          brokerAccountNumber: document.getElementById('brokerAccountNumber').value.trim(),
+          brokerServer: document.getElementById('brokerServer').value.trim() || undefined,
+          accountName: document.getElementById('accountName').value.trim() || undefined,
+          environment: 'demo',
+        });
+        ok.textContent = `Account registered. License: ${account.licenseKey || account.license?.key || '(see table)'}`;
+        ok.classList.add('visible');
+        e.target.reset();
+        await loadAccounts();
+      } catch (ex) {
+        err.textContent = ex.message || 'Could not register account';
+        err.classList.add('visible');
+      }
+    });
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function showToast(msg, type) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast visible ' + (type || '');
+      setTimeout(() => el.classList.remove('visible'), 4000);
+    }
+
+    loadAccounts();
+  </script>
+</body>
+</html>
