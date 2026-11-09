@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Register — Tenavix</title>
+  <link rel="stylesheet" href="../assets/css/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="brand" href="../index.html"><span class="brand-mark">T</span> Tenavix</a>
+      <nav class="nav-links">
+        <a href="login.html">Log in</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="auth-shell">
+    <div class="card auth-card">
+      <h1 style="margin-top:0;font-size:1.4rem">Create account</h1>
+      <p class="muted">Register as a trader. Admin roles are assigned server-side only.</p>
+      <div id="error" class="form-error" role="alert"></div>
+      <form id="reg-form" novalidate>
+        <label for="fullName">Full name (optional)</label>
+        <input id="fullName" name="fullName" type="text" autocomplete="name" />
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" />
+        <p class="hint">Minimum 8 characters. Passwords are hashed server-side (Argon2id).</p>
+        <button class="btn btn-primary" type="submit" style="width:100%">Register</button>
+      </form>
+      <p class="muted" style="margin-top:1rem;margin-bottom:0">
+        Already registered? <a href="login.html">Log in</a>
+      </p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { api } from '../assets/js/api.js';
+    import { redirectIfAuthenticated } from '../assets/js/auth-guard.js';
+
+    redirectIfAuthenticated('dashboard.html');
+
+    const form = document.getElementById('reg-form');
+    const err = document.getElementById('error');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.classList.remove('visible');
+      const email = form.email.value.trim();
+      const password = form.password.value;
+      const fullName = form.fullName.value.trim() || undefined;
+      if (!email || password.length < 8) {
+        err.textContent = 'Valid email and password (min 8 characters) are required.';
+        err.classList.add('visible');
+        return;
+      }
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        const data = await api.register({ email, password, fullName });
+        api.saveSession(data);
+        location.replace('dashboard.html');
+      } catch (ex) {
+        err.textContent = ex.message || 'Registration failed';
+        err.classList.add('visible');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

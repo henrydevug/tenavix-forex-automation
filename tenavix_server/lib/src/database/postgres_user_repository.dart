@@ -95,6 +95,50 @@ class PostgresUserRepository implements UserRepository {
   }
 
   @override
+  Future<({List<User> users, int total})> listUsers({
+    String? emailContains,
+    String? status,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final conn = await pool.connection;
+    final lim = limit.clamp(1, 200);
+    final off = offset < 0 ? 0 : offset;
+    final where = <String>[];
+    final params = <String, Object?>{'lim': lim, 'off': off};
+    if (emailContains != null && emailContains.trim().isNotEmpty) {
+      where.add("email::text ILIKE '%' || @q || '%'");
+      params['q'] = emailContains.trim();
+    }
+    if (status != null && status.trim().isNotEmpty) {
+      where.add('status = @status');
+      params['status'] = status.trim().toLowerCase();
+    }
+    final whereSql = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
+    final countResult = await conn.execute(
+      Sql.named('SELECT COUNT(*)::int FROM users $whereSql'),
+      parameters: params,
+    );
+    final total = countResult.first[0] as int;
+    final result = await conn.execute(
+      Sql.named(
+        'SELECT id, email::text, password_hash, full_name, status, email_verified_at, '
+        'created_at, updated_at, last_login_at FROM users $whereSql '
+        'ORDER BY created_at DESC LIMIT @lim OFFSET @off',
+      ),
+      parameters: params,
+    );
+    final users = <User>[];
+    for (final row in result) {
+      var u = _mapUser(row);
+      final roles = await getRoleNames(u.id);
+      u = u.copyWith(roles: roles);
+      users.add(u);
+    }
+    return (users: users, total: total);
+  }
+
+  @override
   Future<void> assignRole(String userId, String roleName) async {
     final conn = await pool.connection;
     await conn.execute(

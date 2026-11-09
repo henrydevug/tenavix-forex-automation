@@ -10,7 +10,6 @@ import 'package:tenavix_server/src/users/admin_service.dart';
 import 'package:tenavix_server/src/common/types.dart';
 import 'package:tenavix_server/src/database/in_memory_repositories.dart';
 import 'package:tenavix_server/src/database/in_memory_account_repos.dart';
-import 'package:tenavix_server/src/users/user.dart';
 
 void main() {
   late AuthService auth;

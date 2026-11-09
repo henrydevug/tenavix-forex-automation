@@ -62,4 +62,11 @@ class AuditService {
     );
     await repository.append(event);
   }
+
+  Future<List<AuditEvent>> listRecent({
+    int limit = 50,
+    String? actorUserId,
+  }) {
+    return repository.listRecent(limit: limit, actorUserId: actorUserId);
+  }
 }

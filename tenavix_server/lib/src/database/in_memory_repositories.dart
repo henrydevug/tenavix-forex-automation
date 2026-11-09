@@ -2,7 +2,6 @@ import '../auth/auth_service.dart';
 import '../auth/token_service.dart';
 import '../audit/audit_service.dart';
 import '../users/user.dart';
-import '../common/types.dart';
 
 /// In-memory implementations for unit & integration tests.
 /// Production will use PostgreSQL implementations of the same interfaces.
@@ -47,6 +46,28 @@ class InMemoryUserRepository implements UserRepository {
   @override
   Future<void> assignRole(String userId, String roleName) async {
     _userRoles.putIfAbsent(userId, () => {}).add(roleName);
+  }
+
+  @override
+  Future<({List<User> users, int total})> listUsers({
+    String? emailContains,
+    String? status,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    var list = _byId.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    if (emailContains != null && emailContains.trim().isNotEmpty) {
+      final q = emailContains.trim().toLowerCase();
+      list = list.where((u) => u.email.contains(q)).toList();
+    }
+    if (status != null && status.trim().isNotEmpty) {
+      final s = status.trim().toLowerCase();
+      list = list.where((u) => u.status.name == s).toList();
+    }
+    final total = list.length;
+    final page = list.skip(offset).take(limit.clamp(1, 200)).toList();
+    return (users: page, total: total);
   }
 }
 
