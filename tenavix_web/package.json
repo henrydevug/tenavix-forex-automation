@@ -1,0 +1,6 @@
+﻿{
+  "name": "tenavix-web",
+  "private": true,
+  "type": "module",
+  "description": "Tenavix vanilla web client (ES modules)"
+}
