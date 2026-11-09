@@ -57,4 +57,32 @@ class AdminService {
       details: {'reason': reason},
     );
   }
+
+  /// Paginated user directory for administrators only.
+  Future<({List<User> users, int total})> listUsers({
+    required User caller,
+    String? emailContains,
+    String? status,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    Authorization.requireAdmin(caller);
+    return users.listUsers(
+      emailContains: emailContains,
+      status: status,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  /// Recent audit events for administrators only (no secrets in details by convention).
+  Future<List<AuditEvent>> listAuditEvents({
+    required User caller,
+    int limit = 50,
+    String? actorUserId,
+  }) async {
+    Authorization.requireAdmin(caller);
+    final lim = limit.clamp(1, 200);
+    return audit.listRecent(limit: lim, actorUserId: actorUserId);
+  }
 }

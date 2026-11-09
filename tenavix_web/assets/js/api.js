@@ -158,6 +158,22 @@ class ApiClient {
   }
 
   // Admin
+  listUsers({ q, status, limit = 50, offset = 0 } = {}) {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    params.set('limit', String(limit));
+    params.set('offset', String(offset));
+    return this.request(`/api/v1/admin/users?${params}`);
+  }
+
+  listAuditEvents({ limit = 50, actorUserId } = {}) {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (actorUserId) params.set('actorUserId', actorUserId);
+    return this.request(`/api/v1/admin/audit-events?${params}`);
+  }
+
   suspendUser(userId, reason) {
     return this.request(`/api/v1/admin/users/${userId}/suspend`, {
       method: 'POST',

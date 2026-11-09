@@ -28,6 +28,14 @@ abstract class UserRepository {
   Future<User> update(User user);
   Future<List<String>> getRoleNames(String userId);
   Future<void> assignRole(String userId, String roleName);
+
+  /// Admin directory listing. Callers must not expose passwordHash.
+  Future<({List<User> users, int total})> listUsers({
+    String? emailContains,
+    String? status,
+    int limit = 50,
+    int offset = 0,
+  });
 }
 
 /// Abstraction for refresh token persistence.

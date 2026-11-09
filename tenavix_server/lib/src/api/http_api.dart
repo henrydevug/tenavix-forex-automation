@@ -50,7 +50,9 @@ class TenavixApi {
     r.get('/api/v1/subscriptions/<accountId>', _getSubscription);
 
     // Admin
+    r.get('/api/v1/admin/users', _listUsers);
     r.post('/api/v1/admin/users/<id>/suspend', _suspendUser);
+    r.get('/api/v1/admin/audit-events', _listAuditEvents);
 
     // Health
     r.get('/health', (Request req) => Response.ok(jsonEncode({'status': 'ok'})));
@@ -216,6 +218,57 @@ class TenavixApi {
         tradingAccountId: accountId,
       );
       return _json(200, sub?.toPublicJson() ?? {'active': false});
+    } on AppException catch (e) {
+      return _error(e);
+    }
+  }
+
+  Future<Response> _listUsers(Request req) async {
+    try {
+      final user = await _requireUser(req);
+      final qp = req.url.queryParameters;
+      final limit = int.tryParse(qp['limit'] ?? '') ?? 50;
+      final offset = int.tryParse(qp['offset'] ?? '') ?? 0;
+      final result = await admin.listUsers(
+        caller: user,
+        emailContains: qp['q'],
+        status: qp['status'],
+        limit: limit,
+        offset: offset,
+      );
+      return _json(200, {
+        'users': result.users.map((u) => u.toPublicJson()).toList(),
+        'total': result.total,
+        'limit': limit.clamp(1, 200),
+        'offset': offset < 0 ? 0 : offset,
+      });
+    } on AppException catch (e) {
+      return _error(e);
+    }
+  }
+
+  Future<Response> _listAuditEvents(Request req) async {
+    try {
+      final user = await _requireUser(req);
+      final qp = req.url.queryParameters;
+      final limit = int.tryParse(qp['limit'] ?? '') ?? 50;
+      final events = await admin.listAuditEvents(
+        caller: user,
+        limit: limit,
+        actorUserId: qp['actorUserId'],
+      );
+      return _json(200, {
+        'events': events.map((e) => {
+              'id': e.id,
+              'actorUserId': e.actorUserId,
+              'action': e.action,
+              'resourceType': e.resourceType,
+              'resourceId': e.resourceId,
+              'outcome': e.outcome.name,
+              'details': e.details,
+              'createdAt': e.createdAt.toUtc().toIso8601String(),
+            }).toList(),
+      });
     } on AppException catch (e) {
       return _error(e);
     }

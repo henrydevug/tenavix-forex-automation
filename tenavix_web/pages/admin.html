@@ -19,68 +19,123 @@
     <div class="main">
       <h1 class="page-title">Administration</h1>
       <p class="muted" id="welcome">ADMIN only — enforced by backend RBAC.</p>
-
+      <section class="card" style="margin-bottom:1.25rem">
+        <h2 style="margin-top:0;font-size:1.1rem">Users</h2>
+        <form id="search-form" style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:flex-end;margin-bottom:1rem">
+          <div><label for="q">Email contains</label><input id="q" style="margin-bottom:0;min-width:200px" /></div>
+          <div><label for="status">Status</label>
+            <select id="status" style="margin-bottom:0">
+              <option value="">Any</option>
+              <option value="active">active</option>
+              <option value="suspended">suspended</option>
+            </select>
+          </div>
+          <button class="btn btn-ghost" type="submit">Search</button>
+        </form>
+        <div id="users-loading" class="loading">Loading users…</div>
+        <div class="table-wrap">
+          <table id="users-table" class="hidden">
+            <thead><tr><th>Email</th><th>Status</th><th>Roles</th><th>ID</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="muted" id="users-meta"></p>
+      </section>
       <section class="card" style="margin-bottom:1.25rem">
         <h2 style="margin-top:0;font-size:1.1rem">Suspend user</h2>
-        <p class="muted">
-          Backend endpoint: <span class="mono">POST /api/v1/admin/users/&lt;id&gt;/suspend</span>.
-          User list enumeration is not yet exposed by the API; enter a known user UUID.
-        </p>
         <div id="error" class="form-error" role="alert"></div>
         <div id="success" class="form-success" role="status"></div>
         <form id="suspend-form">
           <label for="userId">Target user ID</label>
-          <input id="userId" class="mono" required placeholder="uuid" />
+          <input id="userId" class="mono" required />
           <label for="reason">Reason (optional)</label>
           <input id="reason" />
           <button class="btn btn-danger" type="submit">Suspend user</button>
         </form>
       </section>
-
       <section class="card">
-        <h2 style="margin-top:0;font-size:1.1rem">API coverage gaps</h2>
-        <ul class="muted">
-          <li>List all users — not implemented on backend</li>
-          <li>List all trading accounts (global) — not implemented</li>
-          <li>License force-revoke UI beyond suspend — not implemented</li>
-          <li>Audit log viewer — audit writes exist; read API not exposed</li>
-        </ul>
-        <p class="muted">Do not simulate these operations in the UI.</p>
+        <h2 style="margin-top:0;font-size:1.1rem">Audit events</h2>
+        <div id="audit-loading" class="loading">Loading audit…</div>
+        <div class="table-wrap">
+          <table id="audit-table" class="hidden">
+            <thead><tr><th>When</th><th>Action</th><th>Outcome</th><th>Actor</th><th>Resource</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
     </div>
   </div>
-
   <script type="module">
     import { api } from '../assets/js/api.js';
     import { requireAdmin } from '../assets/js/auth-guard.js';
-
     const user = requireAdmin('login.html');
     if (!user) throw new Error('admin redirect');
-
     document.getElementById('welcome').textContent = `Admin session: ${user.email}`;
-
     document.getElementById('logout-btn').addEventListener('click', async () => {
       try { await api.logout(); } catch { api.clearSession(); }
       location.replace('login.html');
     });
-
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    async function loadUsers(q, status) {
+      const loading = document.getElementById('users-loading');
+      const table = document.getElementById('users-table');
+      const tbody = table.querySelector('tbody');
+      loading.classList.remove('hidden'); table.classList.add('hidden');
+      try {
+        const data = await api.listUsers({ q, status, limit: 50, offset: 0 });
+        tbody.innerHTML = '';
+        for (const u of data.users || []) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.status)}</td>
+            <td>${escapeHtml((u.roles||[]).join(', '))}</td>
+            <td class="mono">${escapeHtml(u.id)}</td>
+            <td><button type="button" class="btn btn-sm btn-ghost" data-fill="${escapeHtml(u.id)}">Use ID</button></td>`;
+          tbody.appendChild(tr);
+        }
+        document.getElementById('users-meta').textContent = `Showing ${(data.users||[]).length} of ${data.total??0}`;
+        loading.classList.add('hidden'); table.classList.remove('hidden');
+      } catch (ex) { loading.textContent = ex.message || 'Failed to load users'; }
+    }
+    async function loadAudit() {
+      const loading = document.getElementById('audit-loading');
+      const table = document.getElementById('audit-table');
+      const tbody = table.querySelector('tbody');
+      try {
+        const data = await api.listAuditEvents({ limit: 50 });
+        tbody.innerHTML = '';
+        for (const e of data.events || []) {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${escapeHtml(e.createdAt)}</td><td>${escapeHtml(e.action)}</td>
+            <td>${escapeHtml(e.outcome)}</td><td class="mono">${escapeHtml(e.actorUserId||'—')}</td>
+            <td>${escapeHtml(e.resourceType||'')} ${escapeHtml(e.resourceId||'')}</td>`;
+          tbody.appendChild(tr);
+        }
+        loading.classList.add('hidden'); table.classList.remove('hidden');
+      } catch (ex) { loading.textContent = ex.message || 'Failed to load audit'; }
+    }
+    document.getElementById('users-table').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-fill]');
+      if (btn) document.getElementById('userId').value = btn.getAttribute('data-fill');
+    });
+    document.getElementById('search-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      loadUsers(document.getElementById('q').value.trim(), document.getElementById('status').value);
+    });
     document.getElementById('suspend-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const err = document.getElementById('error');
       const ok = document.getElementById('success');
-      err.classList.remove('visible');
-      ok.classList.remove('visible');
-      const userId = document.getElementById('userId').value.trim();
-      const reason = document.getElementById('reason').value.trim() || undefined;
+      err.classList.remove('visible'); ok.classList.remove('visible');
       try {
-        await api.suspendUser(userId, reason);
-        ok.textContent = `User ${userId} suspended.`;
-        ok.classList.add('visible');
-      } catch (ex) {
-        err.textContent = ex.message || 'Suspend failed (need ADMIN role and valid id)';
-        err.classList.add('visible');
-      }
+        await api.suspendUser(document.getElementById('userId').value.trim(), document.getElementById('reason').value.trim()||undefined);
+        ok.textContent = 'User suspended.'; ok.classList.add('visible');
+        await loadUsers(document.getElementById('q').value.trim(), document.getElementById('status').value);
+        await loadAudit();
+      } catch (ex) { err.textContent = ex.message || 'Suspend failed'; err.classList.add('visible'); }
     });
+    loadUsers(); loadAudit();
   </script>
 </body>
 </html>
