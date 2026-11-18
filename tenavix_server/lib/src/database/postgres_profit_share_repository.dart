@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:postgres/postgres.dart';
 
 import 'postgres_connection.dart';
@@ -697,8 +699,307 @@ class PostgresProfitShareRepository {
     required String idempotencyKey,
     String? payerReference,
   }) async {
-    if (!RegExp(r'^\\d+(\\.\\d{1,8})?$').hasMatch(amount) ||
-        double.parse(amount) <= 0) {
+    if (!RegExp(r'^\\d+(\\.\\d{1,8})?
+      throw ArgumentError.value(amount, 'amount', 'Must be a positive decimal string.');
+    }
+    if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
+      throw ArgumentError.value(currency, 'currency');
+    }
+    if (!['mobile_money', 'bank_transfer'].contains(channel)) {
+      throw ArgumentError.value(channel, 'channel');
+    }
+    if (provider.trim().isEmpty ||
+        idempotencyKey.trim().isEmpty ||
+        idempotencyKey.length > 128) {
+      throw ArgumentError('Provider and idempotency key are required.');
+    }
+
+    final conn = await pool.connection;
+    return conn.runTx((tx) async {
+      final invoiceResult = await tx.execute(
+        Sql.named(
+          'SELECT i.trading_account_id, i.amount_due, i.currency, i.status, '
+          'ta.user_id, '
+          'i.amount_due - COALESCE(('
+          ' SELECT SUM(pa.amount) FROM profit_share_payment_allocations pa '
+          ' JOIN profit_share_payments p ON p.id = pa.payment_id '
+          " WHERE pa.invoice_id = i.id AND pa.reversed_at IS NULL AND p.status = 'confirmed'"
+          '), 0) AS balance '
+          'FROM profit_share_invoices i '
+          'JOIN trading_accounts ta ON ta.id = i.trading_account_id '
+          'WHERE i.id = @invoice_id::uuid FOR UPDATE OF i',
+        ),
+        parameters: {'invoice_id': invoiceId},
+      );
+      if (invoiceResult.isEmpty ||
+          invoiceResult.first[4].toString() != userId) {
+        throw StateError('Invoice not found.');
+      }
+      final invoice = invoiceResult.first;
+      final invoiceStatus = invoice[3].toString();
+      if (!['issued', 'partially_paid', 'overdue'].contains(invoiceStatus)) {
+        throw StateError('Invoice is not payable.');
+      }
+      if (invoice[2].toString().trim() != currency) {
+        throw StateError('Payment currency must match invoice currency.');
+      }
+      final balance = invoice[5].toString();
+      final amountCheck = await tx.execute(
+        Sql.named('SELECT (@amount::numeric <= @balance::numeric)'),
+        parameters: {'amount': amount, 'balance': balance},
+      );
+      if (amountCheck.first[0] != true) {
+        throw StateError('Payment amount exceeds the invoice outstanding balance.');
+      }
+
+      final payment = await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_payments '
+          '(trading_account_id, amount, currency, channel, provider, '
+          'idempotency_key, payer_reference, status) '
+          'VALUES (@account_id::uuid, @amount::numeric, @currency, @channel, '
+          '@provider, @idempotency, @payer_reference, \'pending\') '
+          'ON CONFLICT (idempotency_key) DO NOTHING '
+          'RETURNING id, amount, currency, channel, provider, status, created_at',
+        ),
+        parameters: {
+          'account_id': invoice[0].toString(),
+          'invoice_id': invoiceId,
+          'amount': amount,
+          'currency': currency,
+          'channel': channel,
+          'provider': provider.trim(),
+          'idempotency': idempotencyKey,
+          'payer_reference': payerReference,
+        },
+      );
+      if (payment.isEmpty) {
+        final existing = await tx.execute(
+          Sql.named(
+            'SELECT id, amount, currency, channel, provider, status, created_at, '
+            'trading_account_id FROM profit_share_payments '
+            'WHERE idempotency_key = @idempotency',
+          ),
+          parameters: {'idempotency': idempotencyKey},
+        );
+        if (existing.isEmpty ||
+            existing.first[7].toString() != invoice[0].toString() ||
+            existing.first[1].toString() != amount ||
+            existing.first[2].toString().trim() != currency) {
+          throw StateError('Idempotency key has already been used for a different payment.');
+        }
+        final e = existing.first;
+        return {
+          'paymentId': e[0].toString(),
+          'amount': e[1].toString(),
+          'currency': e[2].toString().trim(),
+          'channel': e[3].toString(),
+          'provider': e[4].toString(),
+          'status': e[5].toString(),
+          'createdAt': (e[6] as DateTime).toUtc().toIso8601String(),
+          'idempotentReplay': true,
+        };
+      }
+      final p = payment.first;
+      return {
+        'paymentId': p[0].toString(),
+        'amount': p[1].toString(),
+        'currency': p[2].toString().trim(),
+        'channel': p[3].toString(),
+        'provider': p[4].toString(),
+        'status': p[5].toString(),
+        'createdAt': (p[6] as DateTime).toUtc().toIso8601String(),
+        'idempotentReplay': false,
+      };
+    });
+  }
+
+  /// Finance-admin confirmation for a bank transfer after external statement
+  /// verification. Confirmation, allocation, invoice status, receipt and audit
+  /// event are committed together. Mobile-money callbacks need provider-specific
+  /// signature verification and are deliberately not handled by this method.
+  Future<Map<String, Object?>> confirmBankTransferPayment({
+    required String paymentId,
+    required String invoiceId,
+    required String actorUserId,
+    required String evidenceReference,
+  }) async {
+    if (evidenceReference.trim().isEmpty || evidenceReference.length > 160) {
+      throw ArgumentError.value(evidenceReference, 'evidenceReference');
+    }
+    final conn = await pool.connection;
+    return conn.runTx((tx) async {
+      final paymentResult = await tx.execute(
+        Sql.named(
+          'SELECT p.trading_account_id, p.amount, p.currency, p.channel, '
+          'p.status, p.provider_reference, i.id, i.status, i.amount_due, '
+          'i.currency, i.trading_account_id, p.invoice_id '
+          'FROM profit_share_payments p '
+          'JOIN profit_share_invoices i ON i.id = @invoice_id::uuid '
+          'WHERE p.id = @payment_id::uuid '
+          'FOR UPDATE OF p, i',
+        ),
+        parameters: {'payment_id': paymentId, 'invoice_id': invoiceId},
+      );
+      if (paymentResult.isEmpty) throw StateError('Payment or invoice not found.');
+      final p = paymentResult.first;
+      if (p[3].toString() != 'bank_transfer') {
+        throw StateError('Manual confirmation is only allowed for bank transfers.');
+      }
+      if (p[4].toString() == 'confirmed') {
+        final receipt = await tx.execute(
+          Sql.named(
+            'SELECT id, receipt_number, amount, currency, issued_at '
+            'FROM profit_share_receipts WHERE payment_id = @payment_id::uuid',
+          ),
+          parameters: {'payment_id': paymentId},
+        );
+        if (receipt.isEmpty) throw StateError('Confirmed payment has no receipt.');
+        final rr = receipt.first;
+        return {
+          'paymentId': paymentId,
+          'status': 'confirmed',
+          'receiptId': rr[0].toString(),
+          'receiptNumber': rr[1].toString(),
+          'amount': rr[2].toString(),
+          'currency': rr[3].toString().trim(),
+          'idempotentReplay': true,
+        };
+      }
+      if (p[4].toString() != 'pending') {
+        throw StateError('Only pending payments can be confirmed.');
+      }
+      if (p[0].toString() != p[10].toString() ||
+          p[2].toString().trim() != p[9].toString().trim() ||
+          p[11].toString() != invoiceId) {
+        throw StateError('Payment and invoice account/currency do not match.');
+      }
+      if (!['issued', 'partially_paid', 'overdue'].contains(p[7].toString())) {
+        throw StateError('Invoice is not open for payment.');
+      }
+
+      final balance = await tx.execute(
+        Sql.named(
+          'SELECT amount_due - COALESCE(('
+          ' SELECT SUM(pa.amount) FROM profit_share_payment_allocations pa '
+          ' JOIN profit_share_payments cp ON cp.id = pa.payment_id '
+          " WHERE pa.invoice_id = @invoice_id::uuid AND pa.reversed_at IS NULL AND cp.status = 'confirmed'"
+          '), 0) FROM profit_share_invoices WHERE id = @invoice_id::uuid '
+          'FOR UPDATE',
+        ),
+        parameters: {'invoice_id': invoiceId},
+      );
+      final fits = await tx.execute(
+        Sql.named('SELECT (@amount::numeric <= @balance::numeric)'),
+        parameters: {'amount': p[1].toString(), 'balance': balance.first[0].toString()},
+      );
+      if (fits.first[0] != true) {
+        throw StateError('Payment exceeds the remaining invoice balance.');
+      }
+
+      await tx.execute(
+        Sql.named(
+          'UPDATE profit_share_payments SET status = \'confirmed\', '
+          'provider_reference = @evidence, payer_reference = COALESCE(payer_reference, @evidence), '
+          'received_at = NOW(), confirmed_at = NOW() '
+          'WHERE id = @payment_id::uuid',
+        ),
+        parameters: {'payment_id': paymentId, 'evidence': evidenceReference.trim()},
+      );
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_payment_allocations '
+          '(payment_id, invoice_id, amount, currency) '
+          'VALUES (@payment_id::uuid, @invoice_id::uuid, @amount::numeric, @currency)',
+        ),
+        parameters: {
+          'payment_id': paymentId,
+          'invoice_id': invoiceId,
+          'amount': p[1].toString(),
+          'currency': p[2].toString().trim(),
+        },
+      );
+
+      final paidTotal = await tx.execute(
+        Sql.named(
+          'SELECT COALESCE(SUM(amount), 0) FROM profit_share_payment_allocations '
+          'WHERE invoice_id = @invoice_id::uuid AND reversed_at IS NULL',
+        ),
+        parameters: {'invoice_id': invoiceId},
+      );
+      final invoiceBalance = await tx.execute(
+        Sql.named(
+          'SELECT (amount_due <= @paid::numeric) FROM profit_share_invoices '
+          'WHERE id = @invoice_id::uuid',
+        ),
+        parameters: {'invoice_id': invoiceId, 'paid': paidTotal.first[0].toString()},
+      );
+      await tx.execute(
+        Sql.named(
+          'UPDATE profit_share_invoices SET status = '
+          'CASE WHEN @paid_up THEN \'paid\' ELSE \'partially_paid\' END '
+          'WHERE id = @invoice_id::uuid',
+        ),
+        parameters: {'invoice_id': invoiceId, 'paid_up': invoiceBalance.first[0] == true},
+      );
+
+      final receiptNumberResult = await tx.execute(
+        Sql.named(
+          "SELECT 'TNX-R-' || TO_CHAR(CURRENT_DATE, 'YYYYMM') || '-' || "
+          "UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', '') FROM 1 FOR 12))",
+        ),
+      );
+      final receiptNumber = receiptNumberResult.first[0].toString();
+      final receipt = await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_receipts '
+          '(payment_id, receipt_number, amount, currency, issued_by_user_id) '
+          'VALUES (@payment_id::uuid, @receipt_number, @amount::numeric, '
+          '@currency, @actor::uuid) RETURNING id, issued_at',
+        ),
+        parameters: {
+          'payment_id': paymentId,
+          'receipt_number': receiptNumber,
+          'amount': p[1].toString(),
+          'currency': p[2].toString().trim(),
+          'actor': actorUserId,
+        },
+      );
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO audit_events '
+          '(actor_user_id, action, resource_type, resource_id, outcome, details) '
+          'VALUES (@actor::uuid, \'profit_share.payment.confirmed\', '
+          '\'profit_share_payment\', @payment_id, \'success\', '
+          '@details::jsonb)',
+        ),
+        parameters: {
+          'actor': actorUserId,
+          'payment_id': paymentId,
+          'details': jsonEncode({
+            'invoiceId': invoiceId,
+            'evidenceReference': evidenceReference.trim(),
+            'amount': p[1].toString(),
+            'currency': p[2].toString().trim(),
+          }),
+        },
+      );
+      final receiptRow = receipt.first;
+      return {
+        'paymentId': paymentId,
+        'status': 'confirmed',
+        'receiptId': receiptRow[0].toString(),
+        'receiptNumber': receiptNumber,
+        'amount': p[1].toString(),
+        'currency': p[2].toString().trim(),
+        'issuedAt': (receiptRow[1] as DateTime).toUtc().toIso8601String(),
+        'idempotentReplay': false,
+      };
+    });
+  }
+
+}
+).hasMatch(amount)) {
       throw ArgumentError.value(amount, 'amount', 'Must be a positive decimal string.');
     }
     if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
