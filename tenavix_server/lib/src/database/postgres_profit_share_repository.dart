@@ -321,7 +321,7 @@ class PostgresProfitShareRepository {
           'hwm_before': hwmBefore,
           'share_rate': shareRate,
           'deal_id': dealId,
-          'currency': currency,
+          'currency_minor_units': currencyMinorUnits,
         },
       );
       final calc = calculation.first;
