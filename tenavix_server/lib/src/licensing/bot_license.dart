@@ -42,10 +42,11 @@ class BotLicense extends Equatable {
       };
 
   /// Minimal payload returned to EA on validation (no internal IDs leakage beyond necessity).
-  Map<String, dynamic> toValidationJson({required bool subscriptionActive}) => {
-        'valid': isUsable && subscriptionActive,
+  Map<String, dynamic> toValidationJson() => {
+        'valid': isUsable,
         'licenseStatus': status.value,
-        'subscriptionActive': subscriptionActive,
+        // Legacy response field retained for older EA builds; it is no longer a gate.
+        'subscriptionActive': true,
         'expiresAt': expiresAt?.toUtc().toIso8601String(),
         'environmentAllowed': true, // refined later by config
       };
