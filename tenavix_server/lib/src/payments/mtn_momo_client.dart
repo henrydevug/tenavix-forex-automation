@@ -89,14 +89,16 @@ class MtnMomoClient {
     return token;
   }
 
-  Future<String> requestToPay({
+  String newReferenceId() => _uuidV4();
+
+  Future<void> requestToPay({
+    required String referenceId,
     required String amount,
     required String currency,
     required String phoneNumber,
     required String externalId,
     required String payerMessage,
   }) async {
-    final referenceId = _uuidV4();
     final token = await _token();
     final response = await _http.post(
       Uri.parse('$baseUrl/collection/v1_0/requesttopay'),
@@ -120,7 +122,6 @@ class MtnMomoClient {
     if (response.statusCode != 202) {
       throw StateError('MTN RequestToPay was not accepted (HTTP ${response.statusCode}).');
     }
-    return referenceId;
   }
 
   Future<Map<String, dynamic>> getPaymentStatus(String referenceId) async {
