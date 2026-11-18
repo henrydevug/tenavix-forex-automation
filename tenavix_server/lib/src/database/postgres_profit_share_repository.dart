@@ -441,4 +441,246 @@ class PostgresProfitShareRepository {
       };
     });
   }
+
+
+  /// Finalizes a reconciled draft statement and issues its invoice atomically.
+  ///
+  /// A zero-fee statement is finalized without creating an invoice. Positive
+  /// fee statements create one issued invoice and copy every statement item.
+  /// Accrual status changes to invoiced in the same database transaction.
+  Future<Map<String, Object?>> finalizeStatementAndIssueInvoice({
+    required String statementId,
+    int paymentDueDays = 14,
+  }) async {
+    if (paymentDueDays < 1 || paymentDueDays > 60) {
+      throw ArgumentError.value(
+        paymentDueDays,
+        'paymentDueDays',
+        'Must be between 1 and 60 days.',
+      );
+    }
+    final conn = await pool.connection;
+    return conn.runTx((tx) async {
+      final statementResult = await tx.execute(
+        Sql.named(
+          'SELECT s.id, s.trading_account_id, s.status, s.currency, '
+          's.eligible_profit, s.fee_amount, ta.status '
+          'FROM profit_share_statements s '
+          'JOIN trading_accounts ta ON ta.id = s.trading_account_id '
+          'WHERE s.id = @statement_id::uuid '
+          'FOR UPDATE OF s, ta',
+        ),
+        parameters: {'statement_id': statementId},
+      );
+      if (statementResult.isEmpty) {
+        throw StateError('Statement not found.');
+      }
+      final row = statementResult.first;
+      final accountId = row[1].toString();
+      final status = row[2].toString();
+      final currency = row[3].toString().trim();
+      final feeAmount = row[5].toString();
+
+      if (row[6]?.toString() != 'active') {
+        throw StateError('Trading account is not active.');
+      }
+      if (status != 'draft') {
+        throw StateError('Only draft statements can be finalized.');
+      }
+      if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
+        throw StateError('Statement currency is invalid.');
+      }
+
+      final totals = await tx.execute(
+        Sql.named(
+          'SELECT COUNT(*), COALESCE(SUM(eligible_profit), 0), '
+          'COALESCE(SUM(fee_amount), 0), '
+          'COUNT(*) FILTER (WHERE currency <> @currency) '
+          'FROM profit_share_statement_items '
+          'WHERE statement_id = @statement_id::uuid',
+        ),
+        parameters: {
+          'statement_id': statementId,
+          'currency': currency,
+        },
+      );
+      final total = totals.first;
+      final itemCount = int.parse(total[0].toString());
+      final itemEligible = total[1].toString();
+      final itemFees = total[2].toString();
+      final mismatchedCurrencies = int.parse(total[3].toString());
+
+      if (mismatchedCurrencies != 0) {
+        throw StateError('Statement contains mixed currencies.');
+      }
+      if (itemFees != feeAmount) {
+        // Numeric string formatting can differ (e.g. 1.0 vs 1.000).
+        final compare = await tx.execute(
+          Sql.named(
+            'SELECT (@stored::numeric = @calculated::numeric)',
+          ),
+          parameters: {'stored': feeAmount, 'calculated': itemFees},
+        );
+        if (compare.first[0] != true) {
+          throw StateError('Statement total does not match its items.');
+        }
+      }
+      final eligibleCompare = await tx.execute(
+        Sql.named(
+          'SELECT (eligible_profit = @calculated::numeric) '
+          'FROM profit_share_statements WHERE id = @statement_id::uuid',
+        ),
+        parameters: {
+          'calculated': itemEligible,
+          'statement_id': statementId,
+        },
+      );
+      if (eligibleCompare.first[0] != true) {
+        throw StateError('Statement eligible-profit total does not match its items.');
+      }
+
+      final unavailableAccruals = await tx.execute(
+        Sql.named(
+          'SELECT COUNT(*) '
+          'FROM profit_share_statement_items si '
+          'JOIN profit_share_accruals a ON a.id = si.accrual_id '
+          'WHERE si.statement_id = @statement_id::uuid '
+          "AND (a.status <> 'accrued' OR a.trading_account_id <> @account_id::uuid "
+          'OR a.currency <> @currency)',
+        ),
+        parameters: {
+          'statement_id': statementId,
+          'account_id': accountId,
+          'currency': currency,
+        },
+      );
+      if (int.parse(unavailableAccruals.first[0].toString()) != 0) {
+        throw StateError('One or more accruals are no longer billable.');
+      }
+
+      if (itemCount == 0 || itemFees == '0' || itemFees == '0.0') {
+        // Also guard against zero values formatted with more decimal places.
+        final zeroCheck = await tx.execute(
+          Sql.named('SELECT (@amount::numeric = 0)'),
+          parameters: {'amount': itemFees},
+        );
+        if (zeroCheck.first[0] == true) {
+          await tx.execute(
+            Sql.named(
+              'UPDATE profit_share_statements SET status = \'finalized\', '
+              'finalized_at = NOW() WHERE id = @statement_id::uuid',
+            ),
+            parameters: {'statement_id': statementId},
+          );
+          return {
+            'statementId': statementId,
+            'status': 'finalized',
+            'invoiceCreated': false,
+            'itemCount': itemCount,
+            'currency': currency,
+            'feeAmount': itemFees,
+          };
+        }
+      }
+
+      // UUID suffix prevents collisions without requiring a mutable sequence.
+      final invoiceNumberResult = await tx.execute(
+        Sql.named(
+          "SELECT 'TNX-' || TO_CHAR(CURRENT_DATE, 'YYYYMM') || '-' || "
+          "UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', '') FROM 1 FOR 12))",
+        ),
+      );
+      final invoiceNumber = invoiceNumberResult.first[0].toString();
+
+      final invoice = await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_invoices '
+          '(statement_id, trading_account_id, invoice_number, amount_due, '
+          'currency, status, issued_at, due_at) '
+          'VALUES (@statement_id::uuid, @account_id::uuid, @invoice_number, '
+          '@amount::numeric, @currency, \'issued\', NOW(), '
+          'NOW() + (@due_days::int * INTERVAL \'1 day\')) '
+          'RETURNING id, invoice_number, amount_due, currency, status, due_at',
+        ),
+        parameters: {
+          'statement_id': statementId,
+          'account_id': accountId,
+          'invoice_number': invoiceNumber,
+          'amount': itemFees,
+          'currency': currency,
+          'due_days': paymentDueDays,
+        },
+      );
+      final invoiceId = invoice.first[0].toString();
+
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_invoice_items '
+          '(invoice_id, accrual_id, amount, currency) '
+          'SELECT @invoice_id::uuid, si.accrual_id, si.fee_amount, si.currency '
+          'FROM profit_share_statement_items si '
+          'WHERE si.statement_id = @statement_id::uuid '
+          'AND si.fee_amount > 0',
+        ),
+        parameters: {
+          'invoice_id': invoiceId,
+          'statement_id': statementId,
+        },
+      );
+
+      final invoiceTotal = await tx.execute(
+        Sql.named(
+          'SELECT COALESCE(SUM(amount), 0) FROM profit_share_invoice_items '
+          'WHERE invoice_id = @invoice_id::uuid',
+        ),
+        parameters: {'invoice_id': invoiceId},
+      );
+      final invoiceMatches = await tx.execute(
+        Sql.named(
+          'SELECT (@invoice_total::numeric = amount_due) '
+          'FROM profit_share_invoices WHERE id = @invoice_id::uuid',
+        ),
+        parameters: {
+          'invoice_total': invoiceTotal.first[0].toString(),
+          'invoice_id': invoiceId,
+        },
+      );
+      if (invoiceMatches.first[0] != true) {
+        throw StateError('Invoice item total does not match amount due.');
+      }
+
+      await tx.execute(
+        Sql.named(
+          'UPDATE profit_share_accruals a SET status = \'invoiced\' '
+          'FROM profit_share_statement_items si '
+          'WHERE si.statement_id = @statement_id::uuid '
+          'AND si.accrual_id = a.id '
+          "AND a.status = 'accrued'",
+        ),
+        parameters: {'statement_id': statementId},
+      );
+      await tx.execute(
+        Sql.named(
+          'UPDATE profit_share_statements SET status = \'finalized\', '
+          'finalized_at = NOW() WHERE id = @statement_id::uuid',
+        ),
+        parameters: {'statement_id': statementId},
+      );
+
+      final createdInvoice = invoice.first;
+      return {
+        'statementId': statementId,
+        'status': 'finalized',
+        'invoiceCreated': true,
+        'invoiceId': invoiceId,
+        'invoiceNumber': createdInvoice[1].toString(),
+        'amountDue': createdInvoice[2].toString(),
+        'currency': createdInvoice[3].toString().trim(),
+        'invoiceStatus': createdInvoice[4].toString(),
+        'dueAt': (createdInvoice[5] as DateTime).toUtc().toIso8601String(),
+        'itemCount': itemCount,
+      };
+    });
+  }
+
 }
