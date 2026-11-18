@@ -1900,4 +1900,240 @@ class PostgresProfitShareRepository {
     });
   }
 
+
+
+  /// Saves the MTN-generated reference before the network request is sent.
+  /// This makes timeouts recoverable by querying the same provider reference.
+  Future<void> attachMtnProviderReference({
+    required String paymentId,
+    required String referenceId,
+  }) async {
+    final conn = await pool.connection;
+    final result = await conn.execute(
+      Sql.named(
+        "UPDATE profit_share_payments SET provider_reference = @reference "
+        "WHERE id = @payment_id::uuid AND provider = 'mtn_momo_ug' "
+        "AND channel = 'mobile_money' AND status = 'pending' "
+        "AND provider_reference IS NULL RETURNING id",
+      ),
+      parameters: {'payment_id': paymentId, 'reference': referenceId},
+    );
+    if (result.isEmpty) {
+      final existing = await conn.execute(
+        Sql.named(
+          "SELECT provider_reference FROM profit_share_payments "
+          "WHERE id = @payment_id::uuid AND provider = 'mtn_momo_ug'",
+        ),
+        parameters: {'payment_id': paymentId},
+      );
+      if (existing.isEmpty || existing.first[0]?.toString() != referenceId) {
+        throw StateError('Unable to bind MTN reference to pending payment.');
+      }
+    }
+  }
+
+  Future<Map<String, String>?> getMtnPaymentDetails(String paymentId) async {
+    final conn = await pool.connection;
+    final result = await conn.execute(
+      Sql.named(
+        "SELECT id, amount::text, currency, provider_reference, payer_reference, "
+        "status, invoice_id::text FROM profit_share_payments "
+        "WHERE id = @payment_id::uuid AND provider = 'mtn_momo_ug' "
+        "AND channel = 'mobile_money'",
+      ),
+      parameters: {'payment_id': paymentId},
+    );
+    if (result.isEmpty) return null;
+    final r = result.first;
+    return {
+      'paymentId': r[0].toString(),
+      'amount': r[1].toString(),
+      'currency': r[2].toString().trim(),
+      'providerReference': r[3]?.toString() ?? '',
+      'phoneNumber': r[4]?.toString() ?? '',
+      'status': r[5].toString(),
+      'invoiceId': r[6].toString(),
+    };
+  }
+
+  /// Confirms only from a fresh MTN GetTransactionStatus response.
+  /// Callback payloads are never accepted as proof of payment.
+  Future<Map<String, Object?>> confirmMtnPaymentFromStatus({
+    required String paymentId,
+    required String referenceId,
+    required Map<String, dynamic> providerStatus,
+  }) async {
+    final providerState = providerStatus['status']?.toString().toUpperCase();
+    if (providerState != 'SUCCESSFUL') {
+      throw StateError('MTN has not reported a successful payment.');
+    }
+    final conn = await pool.connection;
+    return conn.runTx((tx) async {
+      final result = await tx.execute(
+        Sql.named(
+          'SELECT p.trading_account_id, p.amount::text, p.currency, p.status, '
+          'p.provider_reference, p.invoice_id, i.id, i.status, i.amount_due::text, '
+          'i.currency, i.trading_account_id '
+          'FROM profit_share_payments p '
+          'JOIN profit_share_invoices i ON i.id = p.invoice_id '
+          "WHERE p.id = @payment_id::uuid AND p.provider = 'mtn_momo_ug' "
+          "AND p.channel = 'mobile_money' FOR UPDATE OF p, i",
+        ),
+        parameters: {'payment_id': paymentId},
+      );
+      if (result.isEmpty) throw StateError('MTN payment or invoice not found.');
+      final p = result.first;
+      if (p[4]?.toString() != referenceId ||
+          p[0].toString() != p[10].toString() ||
+          p[2].toString().trim() != p[9].toString().trim() ||
+          p[5].toString() != p[6].toString()) {
+        throw StateError('MTN reference, invoice, account or currency mismatch.');
+      }
+      if (providerStatus['externalId']?.toString() != paymentId ||
+          providerStatus['currency']?.toString() != p[2].toString().trim()) {
+        throw StateError('MTN status response does not match this payment.');
+      }
+      final amountMatches = await tx.execute(
+        Sql.named('SELECT (@provider_amount::numeric = @expected_amount::numeric)'),
+        parameters: {
+          'provider_amount': providerStatus['amount']?.toString() ?? '',
+          'expected_amount': p[1].toString(),
+        },
+      );
+      if (amountMatches.first[0] != true) {
+        throw StateError('MTN amount does not match the invoice payment.');
+      }
+
+      if (p[3].toString() == 'confirmed') {
+        final receipt = await tx.execute(
+          Sql.named(
+            'SELECT id, receipt_number, amount::text, currency, issued_at '
+            'FROM profit_share_receipts WHERE payment_id = @payment_id::uuid',
+          ),
+          parameters: {'payment_id': paymentId},
+        );
+        if (receipt.isEmpty) throw StateError('Confirmed MTN payment has no receipt.');
+        final rr = receipt.first;
+        return {
+          'paymentId': paymentId,
+          'status': 'confirmed',
+          'receiptId': rr[0].toString(),
+          'receiptNumber': rr[1].toString(),
+          'amount': rr[2].toString(),
+          'currency': rr[3].toString().trim(),
+          'idempotentReplay': true,
+        };
+      }
+      if (p[3].toString() != 'pending') {
+        throw StateError('Only pending MTN payments can be confirmed.');
+      }
+      if (!['issued', 'partially_paid', 'overdue'].contains(p[7].toString())) {
+        throw StateError('Invoice is not open for payment.');
+      }
+
+      final balance = await tx.execute(
+        Sql.named(
+          'SELECT amount_due - COALESCE(('
+          'SELECT SUM(pa.amount) FROM profit_share_payment_allocations pa '
+          'JOIN profit_share_payments cp ON cp.id = pa.payment_id '
+          "WHERE pa.invoice_id = @invoice_id::uuid AND pa.reversed_at IS NULL AND cp.status = 'confirmed'"
+          '), 0) FROM profit_share_invoices WHERE id = @invoice_id::uuid FOR UPDATE',
+        ),
+        parameters: {'invoice_id': p[6].toString()},
+      );
+      final fits = await tx.execute(
+        Sql.named('SELECT (@amount::numeric <= @balance::numeric)'),
+        parameters: {'amount': p[1].toString(), 'balance': balance.first[0].toString()},
+      );
+      if (fits.first[0] != true) {
+        throw StateError('MTN payment exceeds the invoice outstanding balance.');
+      }
+
+      await tx.execute(
+        Sql.named(
+          "UPDATE profit_share_payments SET status = 'confirmed', "
+          'received_at = NOW(), confirmed_at = NOW() WHERE id = @payment_id::uuid',
+        ),
+        parameters: {'payment_id': paymentId},
+      );
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_payment_allocations '
+          '(payment_id, invoice_id, amount, currency) '
+          'VALUES (@payment_id::uuid, @invoice_id::uuid, @amount::numeric, @currency)',
+        ),
+        parameters: {
+          'payment_id': paymentId,
+          'invoice_id': p[6].toString(),
+          'amount': p[1].toString(),
+          'currency': p[2].toString().trim(),
+        },
+      );
+
+      final paid = await tx.execute(
+        Sql.named(
+          'SELECT COALESCE(SUM(amount), 0) FROM profit_share_payment_allocations '
+          'WHERE invoice_id = @invoice_id::uuid AND reversed_at IS NULL',
+        ),
+        parameters: {'invoice_id': p[6].toString()},
+      );
+      final isPaid = await tx.execute(
+        Sql.named('SELECT (@paid::numeric >= amount_due) FROM profit_share_invoices WHERE id = @invoice_id::uuid'),
+        parameters: {'paid': paid.first[0].toString(), 'invoice_id': p[6].toString()},
+      );
+      await tx.execute(
+        Sql.named(
+          "UPDATE profit_share_invoices SET status = CASE WHEN @is_paid THEN 'paid' ELSE 'partially_paid' END "
+          'WHERE id = @invoice_id::uuid',
+        ),
+        parameters: {'is_paid': isPaid.first[0] == true, 'invoice_id': p[6].toString()},
+      );
+
+      final receiptNumber = await tx.execute(
+        Sql.named(
+          "SELECT 'TNX-R-' || TO_CHAR(CURRENT_DATE, 'YYYYMM') || '-' || "
+          "UPPER(SUBSTRING(REPLACE(gen_random_uuid()::text, '-', '') FROM 1 FOR 12))",
+        ),
+      );
+      final receipt = await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_receipts '
+          '(payment_id, receipt_number, amount, currency) '
+          'VALUES (@payment_id::uuid, @number, @amount::numeric, @currency) '
+          'RETURNING id, issued_at',
+        ),
+        parameters: {
+          'payment_id': paymentId,
+          'number': receiptNumber.first[0].toString(),
+          'amount': p[1].toString(),
+          'currency': p[2].toString().trim(),
+        },
+      );
+
+      final eventId = '$referenceId:SUCCESSFUL';
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO payment_provider_events '
+          '(provider, provider_event_id, event_type, payload, signature_verified, '
+          'verification_method, verified_at, processed_at, processing_status) '
+          "VALUES ('mtn_momo_ug', @event_id, 'payment.status.successful', "
+          '@payload::jsonb, FALSE, \'status_api\', NOW(), NOW(), \'processed\') '
+          'ON CONFLICT (provider, provider_event_id) DO NOTHING',
+        ),
+        parameters: {'event_id': eventId, 'payload': jsonEncode(providerStatus)},
+      );
+      final receiptRow = receipt.first;
+      return {
+        'paymentId': paymentId,
+        'status': 'confirmed',
+        'receiptId': receiptRow[0].toString(),
+        'receiptNumber': receiptNumber.first[0].toString(),
+        'amount': p[1].toString(),
+        'currency': p[2].toString().trim(),
+        'issuedAt': (receiptRow[1] as DateTime).toUtc().toIso8601String(),
+        'idempotentReplay': false,
+      };
+    });
+  }
+
 }
