@@ -94,7 +94,7 @@ void main() {
   });
 
   group('License validation', () {
-    test('valid license with inactive subscription returns valid=false for trading', () async {
+    test('active license validates independently of subscription billing', () async {
       final reg = await auth.register(email: 'lic@example.com', password: 'securePass123!');
       final account = await accounts.registerAccount(
         caller: reg.user,
@@ -107,9 +107,9 @@ void main() {
         brokerAccountNumber: '55555',
       );
 
-      expect(result['valid'], isFalse); // no active subscription yet
+      expect(result['valid'], isTrue);
       expect(result['licenseStatus'], 'active');
-      expect(result['subscriptionActive'], isFalse);
+      expect(result['subscriptionActive'], isTrue);
     });
   });
 
