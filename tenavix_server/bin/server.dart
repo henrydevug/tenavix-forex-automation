@@ -47,7 +47,6 @@ Future<void> main(List<String> args) async {
   final accounts = AccountService(
     accounts: accountRepo,
     licenses: licenseRepo,
-    subscriptions: subRepo,
     audit: audit,
   );
   final subscriptions = SubscriptionService(
