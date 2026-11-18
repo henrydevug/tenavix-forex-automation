@@ -33,7 +33,7 @@ abstract class SubscriptionRepository {
   Future<Subscription> update(Subscription sub);
 }
 
-/// Manages trading accounts, auto-issues licenses, and creates subscription foundation.
+/// Manages trading accounts and issues account-bound platform licenses.
 /// Never stores or accepts broker passwords (ADR-001).
 class AccountService {
   final TradingAccountRepository accounts;
@@ -50,7 +50,7 @@ class AccountService {
   });
 
   /// Register a new MT5 trading account for the authenticated user.
-  /// Automatically creates a BotLicense. Subscription starts as inactive until payment.
+  /// Automatically creates a BotLicense for the registered MT5 account.
   Future<TradingAccount> registerAccount({
     required User caller,
     required String brokerAccountNumber,
@@ -188,9 +188,6 @@ class AccountService {
       };
     }
 
-    final sub = await subscriptions.findActiveByAccountId(account.id);
-    final subscriptionActive = sub?.isActive ?? false;
-
     // Update last validated timestamp
     final updated = BotLicense(
       id: license.id,
@@ -205,7 +202,7 @@ class AccountService {
     );
     await licenses.update(updated);
 
-    return updated.toValidationJson(subscriptionActive: subscriptionActive);
+    return updated.toValidationJson();
   }
 
   String _generateLicenseKey() {
