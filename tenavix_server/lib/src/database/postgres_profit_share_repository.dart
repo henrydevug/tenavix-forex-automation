@@ -1,7 +1,5 @@
 import 'dart:convert';
 
-import 'dart:convert';
-
 import 'package:postgres/postgres.dart';
 
 import 'postgres_connection.dart';
@@ -701,7 +699,10 @@ class PostgresProfitShareRepository {
     required String idempotencyKey,
     String? payerReference,
   }) async {
-    if (!RegExp(r'^\\d+(\\.\\d{1,8})?
+    if (!RegExp(r'^\d+(\.\d{1,8})?$').hasMatch(amount) ||
+        RegExp(r'^0+(\.0+)?$').hasMatch(amount)) {
+      throw ArgumentError.value(amount, 'amount', 'Must be a positive decimal string.');
+    }
     if (!RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
       throw ArgumentError.value(currency, 'currency');
     }
