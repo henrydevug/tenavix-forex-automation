@@ -128,7 +128,7 @@ void OnTimer()
       g_lastLicenseCheck = TimeCurrent();
       if(!g_license.IsAutomationAllowed() && g_cfg.IsAutomationEnabled())
       {
-         g_log.Warn("License/subscription no longer valid — disabling new entries");
+         g_log.Warn("License no longer valid — disabling new entries");
          g_cfg.SetAutomationEnabled(false);
       }
    }
