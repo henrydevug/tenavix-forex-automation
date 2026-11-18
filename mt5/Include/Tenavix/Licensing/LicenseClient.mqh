@@ -46,8 +46,8 @@ public:
    {
       if(m_cfg == NULL) return false;
       if(m_cfg.IsEmergencyStop()) return false;
-      // Require valid license AND active subscription for new entries
-      return m_lastResult.valid && m_lastResult.subscriptionActive;
+      // Profit-share replaces subscriptions. License validity remains mandatory.
+      return m_lastResult.valid;
    }
 
    //--- Call backend; on network failure keep previous result (fail closed for NEW entries after grace)
@@ -135,7 +135,7 @@ private:
       else
          m_lastResult.state = TNX_LIC_INVALID;
 
-      m_lastResult.reason = m_lastResult.valid ? "OK" : "INVALID_OR_INACTIVE_SUB";
+      m_lastResult.reason = m_lastResult.valid ? "OK" : "INVALID_LICENSE";
       if(httpCode < 200 || httpCode >= 300)
          m_lastResult.reason = "HTTP_" + IntegerToString(httpCode);
    }
