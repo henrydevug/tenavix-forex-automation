@@ -31,7 +31,7 @@ jobs:
       - run: dart pub get
       - run: dart analyze
       - run: dart format --output=none --set-exit-if-changed lib/src/payments/mtn_momo_client.dart test/payments/mtn_momo_client_test.dart
-      - run: dart test test/unit test/security test/payments
+      - run: dart test test/unit test/security test/payments test/profit_share
       - name: Migrate and integration tests
         env:
           TENAVIX_DB_HOST: localhost
