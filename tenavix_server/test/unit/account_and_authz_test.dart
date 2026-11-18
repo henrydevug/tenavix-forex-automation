@@ -36,7 +36,6 @@ void main() {
     accounts = AccountService(
       accounts: accountRepo,
       licenses: licenseRepo,
-      subscriptions: subRepo,
       audit: audit,
     );
   });
