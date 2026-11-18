@@ -49,6 +49,10 @@ class TenavixApi {
     r.post('/api/v1/licenses/validate', _validateLicense);
     r.post('/api/v1/ea/closed-deals', _ingestClosedDeal);
 
+    // Profit-share billing and payment reconciliation
+    r.post('/api/v1/billing/invoices/<invoiceId>/payments', _createBillingPayment);
+    r.post('/api/v1/admin/billing/payments/<paymentId>/confirm', _confirmBankTransferPayment);
+
     // Subscriptions
     r.post('/api/v1/subscriptions/activate', _activateSubscription);
     r.get('/api/v1/subscriptions/<accountId>', _getSubscription);
@@ -376,6 +380,90 @@ class TenavixApi {
       return _json(200, {'ok': true, 'userId': id, 'status': 'suspended'});
     } on AppException catch (e) {
       return _error(e);
+    }
+  }
+
+
+  Future<Response> _createBillingPayment(Request req, String invoiceId) async {
+    try {
+      final user = await _requireUser(req);
+      final decoded = jsonDecode(await req.readAsString());
+      if (decoded is! Map<String, dynamic>) {
+        return _json(400, {'code': ErrorCodes.validation, 'message': 'Expected a JSON object.'});
+      }
+      final amount = decoded['amount'];
+      final currency = decoded['currency'];
+      final channel = decoded['channel'];
+      final provider = decoded['provider'];
+      final idempotencyKey = decoded['idempotencyKey'];
+      if (amount is! String ||
+          currency is! String ||
+          channel is! String ||
+          provider is! String ||
+          idempotencyKey is! String) {
+        return _json(400, {
+          'code': ErrorCodes.validation,
+          'message': 'amount, currency, channel, provider and idempotencyKey are required as strings.',
+        });
+      }
+      final result = await profitShare.createPendingInvoicePayment(
+        userId: user.id,
+        invoiceId: invoiceId,
+        amount: amount,
+        currency: currency,
+        channel: channel,
+        provider: provider,
+        idempotencyKey: idempotencyKey,
+        payerReference: decoded['payerReference'] as String?,
+      );
+      return _json(201, result);
+    } on AppException catch (e) {
+      return _error(e);
+    } on ArgumentError catch (e) {
+      return _json(400, {'code': ErrorCodes.validation, 'message': e.message.toString()});
+    } on StateError catch (e) {
+      return _json(409, {'code': ErrorCodes.conflict, 'message': e.message});
+    } catch (e) {
+      return _json(500, {'code': ErrorCodes.internal, 'message': 'Unable to create payment.'});
+    }
+  }
+
+  Future<Response> _confirmBankTransferPayment(
+    Request req,
+    String paymentId,
+  ) async {
+    try {
+      final user = await _requireUser(req);
+      if (!user.isAdmin) {
+        return _json(403, {'code': ErrorCodes.forbidden, 'message': 'Administrator access required.'});
+      }
+      final decoded = jsonDecode(await req.readAsString());
+      if (decoded is! Map<String, dynamic>) {
+        return _json(400, {'code': ErrorCodes.validation, 'message': 'Expected a JSON object.'});
+      }
+      final invoiceId = decoded['invoiceId'];
+      final evidenceReference = decoded['evidenceReference'];
+      if (invoiceId is! String || evidenceReference is! String) {
+        return _json(400, {
+          'code': ErrorCodes.validation,
+          'message': 'invoiceId and evidenceReference are required as strings.',
+        });
+      }
+      final result = await profitShare.confirmBankTransferPayment(
+        paymentId: paymentId,
+        invoiceId: invoiceId,
+        actorUserId: user.id,
+        evidenceReference: evidenceReference,
+      );
+      return _json(200, result);
+    } on AppException catch (e) {
+      return _error(e);
+    } on ArgumentError catch (e) {
+      return _json(400, {'code': ErrorCodes.validation, 'message': e.message.toString()});
+    } on StateError catch (e) {
+      return _json(409, {'code': ErrorCodes.conflict, 'message': e.message});
+    } catch (e) {
+      return _json(500, {'code': ErrorCodes.internal, 'message': 'Unable to confirm payment.'});
     }
   }
 
