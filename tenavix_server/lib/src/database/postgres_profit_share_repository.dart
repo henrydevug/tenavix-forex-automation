@@ -9,6 +9,46 @@ class PostgresProfitShareRepository {
 
   PostgresProfitShareRepository(this.pool);
 
+  /// Resolves a license credential to its registered, active MT5 account.
+  /// The account ID is deliberately derived server-side, never accepted from EA.
+  Future<Map<String, String>?> resolveLicensedAccount({
+    required String licenseKey,
+    required String brokerAccountNumber,
+    required String brokerServer,
+  }) async {
+    if (licenseKey.trim().isEmpty ||
+        brokerAccountNumber.trim().isEmpty ||
+        brokerServer.trim().isEmpty) {
+      return null;
+    }
+    final conn = await pool.connection;
+    final result = await conn.execute(
+      Sql.named(
+        'SELECT ta.id, ta.currency, ta.environment '
+        'FROM bot_licenses bl '
+        'JOIN trading_accounts ta ON ta.id = bl.trading_account_id '
+        'WHERE bl.license_key = @license_key '
+        "AND bl.status = 'active' "
+        'AND (bl.expires_at IS NULL OR bl.expires_at > NOW()) '
+        "AND ta.status = 'active' "
+        'AND ta.broker_account_number = @account_number '
+        'AND ta.broker_server = @broker_server '
+        'LIMIT 1',
+      ),
+      parameters: {
+        'license_key': licenseKey,
+        'account_number': brokerAccountNumber,
+        'broker_server': brokerServer,
+      },
+    );
+    if (result.isEmpty || result.first[1] == null) return null;
+    return {
+      'tradingAccountId': result.first[0].toString(),
+      'currency': result.first[1].toString().trim(),
+      'environment': result.first[2].toString(),
+    };
+  }
+
   /// Returns null when the broker deal was already recorded.
   /// Monetary values must be decimal strings, never binary floating-point.
   Future<Map<String, Object?>?> recordClosedDeal({
