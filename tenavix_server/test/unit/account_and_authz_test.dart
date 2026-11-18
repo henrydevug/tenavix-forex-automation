@@ -16,7 +16,6 @@ void main() {
   late InMemoryUserRepository userRepo;
   late InMemoryTradingAccountRepository accountRepo;
   late InMemoryLicenseRepository licenseRepo;
-  late InMemorySubscriptionRepository subRepo;
 
   setUp(() {
     userRepo = InMemoryUserRepository();
@@ -32,7 +31,6 @@ void main() {
     );
     accountRepo = InMemoryTradingAccountRepository();
     licenseRepo = InMemoryLicenseRepository();
-    subRepo = InMemorySubscriptionRepository();
     accounts = AccountService(
       accounts: accountRepo,
       licenses: licenseRepo,
