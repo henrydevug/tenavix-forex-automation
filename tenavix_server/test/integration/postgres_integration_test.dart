@@ -93,12 +93,13 @@ void main() {
     expect(license, isNotNull);
     expect(license!.licenseKey.startsWith('TNX-'), isTrue);
 
-    // Before subscription
+    // License validation is independent of subscription billing.
     var validation = await accounts.validateLicense(
       licenseKey: license.licenseKey,
       brokerAccountNumber: account.brokerAccountNumber,
     );
-    expect(validation['subscriptionActive'], isFalse);
+    expect(validation['valid'], isTrue);
+    expect(validation['subscriptionActive'], isTrue);
 
     // Activate subscription
     final sub = await subs.activateStandard(
