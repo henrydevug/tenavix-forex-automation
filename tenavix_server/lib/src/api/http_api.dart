@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../payments/mtn_momo_client.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import '../auth/auth_service.dart';
@@ -20,6 +21,7 @@ class TenavixApi {
   final TokenService tokenService;
   final UserRepository users;
   final PostgresProfitShareRepository profitShare;
+  final MtnMomoClient mtnMomo;
 
   TenavixApi({
     required this.auth,
@@ -29,6 +31,7 @@ class TenavixApi {
     required this.tokenService,
     required this.users,
     required this.profitShare,
+    required this.mtnMomo,
   });
 
   Router get router {
@@ -52,6 +55,7 @@ class TenavixApi {
     // Profit-share billing and payment reconciliation
     r.post('/api/v1/billing/invoices/<invoiceId>/payments', _createBillingPayment);
     r.post('/api/v1/admin/billing/payments/<paymentId>/confirm', _confirmBankTransferPayment);
+    r.get('/api/v1/billing/payments/<paymentId>', _getMtnPaymentStatus);
 
     // Subscriptions
     r.post('/api/v1/subscriptions/activate', _activateSubscription);
@@ -389,23 +393,42 @@ class TenavixApi {
       final user = await _requireUser(req);
       final decoded = jsonDecode(await req.readAsString());
       if (decoded is! Map<String, dynamic>) {
-        return _json(400, {'code': ErrorCodes.validation, 'message': 'Expected a JSON object.'});
+        return _json(400, {'code': 'validation_error', 'message': 'Expected a JSON object.'});
       }
       final amount = decoded['amount'];
       final currency = decoded['currency'];
       final channel = decoded['channel'];
       final provider = decoded['provider'];
       final idempotencyKey = decoded['idempotencyKey'];
+      final phoneNumber = decoded['phoneNumber'] ?? decoded['payerReference'];
       if (amount is! String ||
           currency is! String ||
           channel is! String ||
           provider is! String ||
           idempotencyKey is! String) {
         return _json(400, {
-          'code': ErrorCodes.validation,
+          'code': 'validation_error',
           'message': 'amount, currency, channel, provider and idempotencyKey are required as strings.',
         });
       }
+
+      if (channel == 'mobile_money') {
+        if (provider != 'mtn_momo_ug') {
+          return _json(400, {'code': 'unsupported_provider', 'message': 'Only MTN MoMo Uganda is currently integrated.'});
+        }
+        if (currency != 'UGX' ||
+            phoneNumber is! String ||
+            !RegExp(r'^256[37][0-9]{8}$').hasMatch(phoneNumber)) {
+          return _json(400, {
+            'code': 'validation_error',
+            'message': 'MTN MoMo Uganda requires UGX and a phone number in 2567XXXXXXXX or 2563XXXXXXXX format.',
+          });
+        }
+        if (!mtnMomo.isConfigured) {
+          return _json(503, {'code': 'provider_not_configured', 'message': 'MTN MoMo credentials are not configured.'});
+        }
+      }
+
       final result = await profitShare.createPendingInvoicePayment(
         userId: user.id,
         invoiceId: invoiceId,
@@ -414,17 +437,112 @@ class TenavixApi {
         channel: channel,
         provider: provider,
         idempotencyKey: idempotencyKey,
-        payerReference: decoded['payerReference'] as String?,
+        payerReference: channel == 'mobile_money' ? phoneNumber as String : decoded['payerReference'] as String?,
       );
-      return _json(201, result);
+
+      if (channel != 'mobile_money') return _json(201, result);
+
+      final paymentId = result['paymentId']!.toString();
+      if (result['idempotentReplay'] == true) {
+        final details = await profitShare.getMtnPaymentDetails(
+          paymentId: paymentId,
+          userId: user.id,
+        );
+        if (details == null) return _json(404, {'code': 'not_found', 'message': 'Payment not found.'});
+        return _json(200, await _refreshMtnPayment(details));
+      }
+
+      final referenceId = mtnMomo.newReferenceId();
+      await profitShare.attachMtnProviderReference(
+        paymentId: paymentId,
+        referenceId: referenceId,
+      );
+      try {
+        await mtnMomo.requestToPay(
+          referenceId: referenceId,
+          amount: amount,
+          currency: currency,
+          phoneNumber: phoneNumber as String,
+          externalId: paymentId,
+          payerMessage: 'Tenavix invoice payment',
+        );
+      } catch (_) {
+        // Do not mark a timeout as failed. The provider may have accepted the
+        // request before the connection was lost. Reconciliation uses this ID.
+        return _json(202, {
+          'paymentId': paymentId,
+          'providerReference': referenceId,
+          'status': 'pending',
+          'message': 'Payment request outcome is being reconciled. Do not create a second payment.',
+        });
+      }
+      return _json(202, {
+        'paymentId': paymentId,
+        'providerReference': referenceId,
+        'status': 'pending',
+        'message': 'Approve the payment prompt on your MTN MoMo phone.',
+      });
     } on AppException catch (e) {
       return _error(e);
     } on ArgumentError catch (e) {
-      return _json(400, {'code': ErrorCodes.validation, 'message': e.message.toString()});
+      return _json(400, {'code': 'validation_error', 'message': e.message.toString()});
     } on StateError catch (e) {
-      return _json(409, {'code': ErrorCodes.conflict, 'message': e.message});
-    } catch (e) {
-      return _json(500, {'code': ErrorCodes.internal, 'message': 'Unable to create payment.'});
+      return _json(409, {'code': 'payment_conflict', 'message': e.message});
+    } catch (_) {
+      return _json(500, {'code': 'internal_error', 'message': 'Unable to create payment.'});
+    }
+  }
+
+  Future<Map<String, Object?>> _refreshMtnPayment(
+    Map<String, String> details,
+  ) async {
+    final current = details['status']!;
+    final reference = details['providerReference']!;
+    if (current != 'pending' || reference.isEmpty) {
+      return {'paymentId': details['paymentId'], 'status': current};
+    }
+    final providerStatus = await mtnMomo.getPaymentStatus(reference);
+    final status = providerStatus['status']?.toString().toUpperCase();
+    if (status == 'SUCCESSFUL') {
+      return await profitShare.confirmMtnPaymentFromStatus(
+        paymentId: details['paymentId']!,
+        referenceId: reference,
+        providerStatus: providerStatus,
+      );
+    }
+    if (status == 'FAILED') {
+      await profitShare.markMtnPaymentFailedFromStatus(
+        paymentId: details['paymentId']!,
+        referenceId: reference,
+        providerStatus: providerStatus,
+      );
+      return {'paymentId': details['paymentId'], 'status': 'failed'};
+    }
+    return {
+      'paymentId': details['paymentId'],
+      'status': 'pending',
+      'providerStatus': status ?? 'PENDING',
+    };
+  }
+
+  Future<Response> _getMtnPaymentStatus(Request req, String paymentId) async {
+    try {
+      final user = await _requireUser(req);
+      final details = await profitShare.getMtnPaymentDetails(
+        paymentId: paymentId,
+        userId: user.id,
+      );
+      if (details == null) return _json(404, {'code': 'not_found', 'message': 'Payment not found.'});
+      if (details['providerReference']!.isEmpty) {
+        return _json(200, {'paymentId': paymentId, 'status': details['status']});
+      }
+      return _json(200, await _refreshMtnPayment(details));
+    } on AppException catch (e) {
+      return _error(e);
+    } on StateError catch (e) {
+      return _json(409, {'code': 'provider_status_error', 'message': e.message});
+    } catch (_) {
+      return _json(502, {'code': 'provider_unavailable', 'message': 'Unable to verify payment status with MTN.'});
     }
   }
 
