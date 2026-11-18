@@ -1900,10 +1900,6 @@ class PostgresProfitShareRepository {
     });
   }
 
-
-
-  /// Saves the MTN-generated reference before the network request is sent.
-  /// This makes timeouts recoverable by querying the same provider reference.
   Future<void> attachMtnProviderReference({
     required String paymentId,
     required String referenceId,
@@ -2202,4 +2198,5 @@ class PostgresProfitShareRepository {
     });
   }
 
+}
 }
