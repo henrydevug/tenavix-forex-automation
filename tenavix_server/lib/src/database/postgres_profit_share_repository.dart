@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'dart:convert';
+
 import 'package:postgres/postgres.dart';
 
 import 'postgres_connection.dart';
@@ -755,9 +757,9 @@ class PostgresProfitShareRepository {
       final payment = await tx.execute(
         Sql.named(
           'INSERT INTO profit_share_payments '
-          '(trading_account_id, amount, currency, channel, provider, '
+          '(trading_account_id, invoice_id, amount, currency, channel, provider, '
           'idempotency_key, payer_reference, status) '
-          'VALUES (@account_id::uuid, @amount::numeric, @currency, @channel, '
+          'VALUES (@account_id::uuid, @invoice_id::uuid, @amount::numeric, @currency, @channel, '
           '@provider, @idempotency, @payer_reference, \'pending\') '
           'ON CONFLICT (idempotency_key) DO NOTHING '
           'RETURNING id, amount, currency, channel, provider, status, created_at',
@@ -1064,6 +1066,7 @@ class PostgresProfitShareRepository {
         ),
         parameters: {
           'account_id': invoice[0].toString(),
+          'invoice_id': invoiceId,
           'amount': amount,
           'currency': currency,
           'channel': channel,
@@ -1132,7 +1135,7 @@ class PostgresProfitShareRepository {
         Sql.named(
           'SELECT p.trading_account_id, p.amount, p.currency, p.channel, '
           'p.status, p.provider_reference, i.id, i.status, i.amount_due, '
-          'i.currency, i.trading_account_id '
+          'i.currency, i.trading_account_id, p.invoice_id '
           'FROM profit_share_payments p '
           'JOIN profit_share_invoices i ON i.id = @invoice_id::uuid '
           'WHERE p.id = @payment_id::uuid '
@@ -1169,7 +1172,8 @@ class PostgresProfitShareRepository {
         throw StateError('Only pending payments can be confirmed.');
       }
       if (p[0].toString() != p[10].toString() ||
-          p[2].toString().trim() != p[9].toString().trim()) {
+          p[2].toString().trim() != p[9].toString().trim() ||
+          p[11].toString() != invoiceId) {
         throw StateError('Payment and invoice account/currency do not match.');
       }
       if (!['issued', 'partially_paid', 'overdue'].contains(p[7].toString())) {
