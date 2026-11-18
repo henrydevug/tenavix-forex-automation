@@ -5,6 +5,14 @@ import 'package:http/testing.dart';
 import 'package:tenavix_server/src/payments/mtn_momo_client.dart';
 import 'package:test/test.dart';
 
+String? _header(http.Request request, String name) {
+  final key = name.toLowerCase();
+  for (final entry in request.headers.entries) {
+    if (entry.key.toLowerCase() == key) return entry.value;
+  }
+  return null;
+}
+
 void main() {
   group('MtnMomoClient', () {
     test('requests a token using migrated Uganda credential headers', () async {
@@ -13,9 +21,9 @@ void main() {
         httpClient: MockClient((request) async {
           if (request.url.path == '/collection/token') {
             tokenRequested = true;
-            expect(request.headers['X-Target-Environment'], 'mtnuganda');
-            expect(request.headers['Ocp-Apim-Subscription-Key'], 'subscription');
-            expect(request.headers['Authorization'], startsWith('Basic '));
+            expect(_header(request, 'X-Target-Environment'), 'mtnuganda');
+            expect(_header(request, 'Ocp-Apim-Subscription-Key'), 'subscription');
+            expect(_header(request, 'Authorization'), startsWith('Basic '));
             return http.Response(
               jsonEncode({'access_token': 'test-token', 'expires_in': 3600}),
               200,
@@ -59,9 +67,9 @@ void main() {
           }
           requestCalls++;
           expect(request.url.path, '/collection/v1_0/requesttopay');
-          expect(request.headers['Authorization'], 'Bearer test-token');
+          expect(_header(request, 'Authorization'), 'Bearer test-token');
           expect(request.headers['X-Target-Environment'], 'mtnuganda');
-          expect(request.headers['X-Reference-Id'], matches(
+          expect(_header(request, 'X-Reference-Id'), matches(
             RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
           ));
           final body = jsonDecode(request.body) as Map<String, dynamic>;
