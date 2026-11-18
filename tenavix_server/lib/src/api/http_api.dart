@@ -8,6 +8,7 @@ import '../subscriptions/subscription_service.dart';
 import '../users/admin_service.dart';
 import '../users/user.dart';
 import '../common/types.dart';
+import '../database/postgres_profit_share_repository.dart';
 
 /// Lightweight HTTP API layer (Serverpod-compatible contract style).
 /// Endpoints follow the logical contracts defined in the master specification.
@@ -18,6 +19,7 @@ class TenavixApi {
   final AdminService admin;
   final TokenService tokenService;
   final UserRepository users;
+  final PostgresProfitShareRepository profitShare;
 
   TenavixApi({
     required this.auth,
@@ -26,6 +28,7 @@ class TenavixApi {
     required this.admin,
     required this.tokenService,
     required this.users,
+    required this.profitShare,
   });
 
   Router get router {
@@ -44,6 +47,7 @@ class TenavixApi {
 
     // Licenses (EA-facing — no user JWT required; validated by license key)
     r.post('/api/v1/licenses/validate', _validateLicense);
+    r.post('/api/v1/ea/closed-deals', _ingestClosedDeal);
 
     // Subscriptions
     r.post('/api/v1/subscriptions/activate', _activateSubscription);
@@ -194,6 +198,92 @@ class TenavixApi {
     } on AppException catch (e) {
       return _error(e);
     }
+  }
+
+  /// EA-facing closed-deal ingestion. The license is supplied as a bearer
+  /// credential; account identity is resolved from the license, not request JSON.
+  Future<Response> _ingestClosedDeal(Request req) async {
+    try {
+      final authorization = req.headers['authorization'] ?? '';
+      if (!authorization.toLowerCase().startsWith('bearer ')) {
+        return _json(401, {'code': ErrorCodes.licenseInvalid, 'message': 'Missing EA license credential.'});
+      }
+      final licenseKey = authorization.substring(7).trim();
+      final decoded = jsonDecode(await req.readAsString());
+      if (decoded is! Map<String, dynamic>) {
+        return _json(400, {'code': ErrorCodes.validation, 'message': 'Expected a JSON object.'});
+      }
+      final body = decoded;
+      String requiredText(String key) {
+        final value = body[key];
+        if (value is! String || value.trim().isEmpty) {
+          throw FormatException('Field "$key" is required as text.');
+        }
+        return value.trim();
+      }
+      String optionalMoney(String key) {
+        final value = body[key];
+        if (value == null) return '0';
+        if (value is! String) {
+          throw FormatException('Field "$key" must be a decimal string.');
+        }
+        return value;
+      }
+
+      final account = await profitShare.resolveLicensedAccount(
+        licenseKey: licenseKey,
+        brokerAccountNumber: requiredText('brokerAccountNumber'),
+        brokerServer: requiredText('brokerServer'),
+      );
+      if (account == null) {
+        return _json(401, {'code': ErrorCodes.licenseInvalid, 'message': 'License or registered MT5 account is invalid.'});
+      }
+      if (account['environment'] != 'demo') {
+        return _json(403, {'code': ErrorCodes.forbidden, 'message': 'Closed-deal ingestion is DEMO-only until live release approval.'});
+      }
+
+      final currency = account['currency']!;
+      final minorUnits = _currencyMinorUnits(currency);
+      final dealTime = DateTime.tryParse(requiredText('dealTime'));
+      if (dealTime == null) {
+        throw const FormatException('dealTime must be an ISO-8601 timestamp.');
+      }
+
+      final result = await profitShare.recordClosedDeal(
+        tradingAccountId: account['tradingAccountId']!,
+        brokerDealId: requiredText('dealId'),
+        symbol: requiredText('symbol'),
+        dealTime: dealTime,
+        currency: currency,
+        currencyMinorUnits: minorUnits,
+        profit: requiredText('profit'),
+        commission: optionalMoney('commission'),
+        swap: optionalMoney('swap'),
+        brokerFee: optionalMoney('brokerFee'),
+      );
+      if (result == null) {
+        return _json(200, {'accepted': true, 'duplicate': true});
+      }
+      return _json(202, {'accepted': true, 'duplicate': false, 'result': result});
+    } on FormatException catch (e) {
+      return _json(400, {'code': ErrorCodes.validation, 'message': e.message});
+    } on ArgumentError catch (e) {
+      return _json(400, {'code': ErrorCodes.validation, 'message': e.message});
+    } on StateError catch (e) {
+      return _json(409, {'code': ErrorCodes.conflict, 'message': e.message});
+    } on AppException catch (e) {
+      return _error(e);
+    } catch (_) {
+      return _json(500, {'code': ErrorCodes.internal, 'message': 'Unable to process closed deal.'});
+    }
+  }
+
+  int _currencyMinorUnits(String currency) {
+    const zeroDecimal = {'BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'};
+    const threeDecimal = {'BHD', 'IQD', 'JOD', 'KWD', 'LYD', 'OMR', 'TND'};
+    if (zeroDecimal.contains(currency)) return 0;
+    if (threeDecimal.contains(currency)) return 3;
+    return 2;
   }
 
   Future<Response> _activateSubscription(Request req) async {
