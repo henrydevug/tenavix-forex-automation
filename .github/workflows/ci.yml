@@ -30,7 +30,7 @@ jobs:
           sdk: stable
       - run: dart pub get
       - run: dart analyze
-      - run: dart format --output=none --set-exit-if-changed lib/src/payments/mtn_momo_client.dart test/payments/mtn_momo_client_test.dart
+      - run: dart format --output=show lib/src/payments/mtn_momo_client.dart test/payments/mtn_momo_client_test.dart
       - run: dart test test/unit test/security test/payments
       - name: Migrate and integration tests
         env:
