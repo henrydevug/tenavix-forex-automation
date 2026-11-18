@@ -11,15 +11,19 @@ void main() {
       var tokenRequested = false;
       final client = MtnMomoClient(
         httpClient: MockClient((request) async {
-          tokenRequested = true;
-          expect(request.url.path, '/collection/token');
+          if (request.url.path == '/collection/token') {
+            tokenRequested = true;
+            expect(request.headers['X-Target-Environment'], 'mtnuganda');
+            expect(request.headers['Ocp-Apim-Subscription-Key'], 'subscription');
+            expect(request.headers['Authorization'], startsWith('Basic '));
+            return http.Response(
+              jsonEncode({'access_token': 'test-token', 'expires_in': 3600}),
+              200,
+            );
+          }
+          expect(request.url.path, '/collection/v1_0/requesttopay');
           expect(request.headers['X-Target-Environment'], 'mtnuganda');
-          expect(request.headers['Ocp-Apim-Subscription-Key'], 'subscription');
-          expect(request.headers['Authorization'], startsWith('Basic '));
-          return http.Response(
-            jsonEncode({'access_token': 'test-token', 'expires_in': 3600}),
-            200,
-          );
+          return http.Response('', 202);
         }),
         baseUrl: 'https://momoapi.momo.africa',
         targetEnvironment: 'mtnuganda',
