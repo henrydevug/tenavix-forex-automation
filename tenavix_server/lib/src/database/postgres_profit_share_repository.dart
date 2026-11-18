@@ -1932,14 +1932,20 @@ class PostgresProfitShareRepository {
     }
   }
 
-  Future<Map<String, String>?> getMtnPaymentDetails({required String paymentId, required String userId}) async {
+  Future<Map<String, String>?> getMtnPaymentDetails({
+    required String paymentId,
+    required String userId,
+  }) async {
     final conn = await pool.connection;
     final result = await conn.execute(
       Sql.named(
-        "SELECT id, amount::text, currency, provider_reference, payer_reference, "
-        "status, invoice_id::text FROM profit_share_payments "
-        "WHERE id = @payment_id::uuid AND provider = 'mtn_momo_ug' "
-        "AND channel = 'mobile_money'",
+        "SELECT p.id, p.amount::text, p.currency, p.provider_reference, "
+        "p.payer_reference, p.status, p.invoice_id::text "
+        "FROM profit_share_payments p "
+        "JOIN profit_share_invoices i ON i.id = p.invoice_id "
+        "JOIN trading_accounts ta ON ta.id = i.trading_account_id "
+        "WHERE p.id = @payment_id::uuid AND p.provider = 'mtn_momo_ug' "
+        "AND p.channel = 'mobile_money' AND ta.user_id = @user_id::uuid",
       ),
       parameters: {'payment_id': paymentId, 'user_id': userId},
     );
