@@ -38,14 +38,12 @@ abstract class SubscriptionRepository {
 class AccountService {
   final TradingAccountRepository accounts;
   final LicenseRepository licenses;
-  final SubscriptionRepository subscriptions;
   final AuditService audit;
   final _uuid = const Uuid();
 
   AccountService({
     required this.accounts,
     required this.licenses,
-    required this.subscriptions,
     required this.audit,
   });
 
