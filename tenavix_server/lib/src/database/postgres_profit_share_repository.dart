@@ -137,7 +137,7 @@ class PostgresProfitShareRepository {
           'SELECT cumulative_after, hwm_before, '
           ' GREATEST(0, cumulative_after - hwm_before) AS eligible_profit, '
           ' ROUND(GREATEST(0, cumulative_after - hwm_before) * rate, '
-          '       CASE WHEN @currency IN (\'JPY\', \'KRW\') THEN 0 ELSE 2 END) AS fee_amount, '
+          '       @currency_minor_units::int) AS fee_amount, ',
           ' GREATEST(hwm_before, cumulative_after) AS hwm_after '
           'FROM calc_values',
         ),
