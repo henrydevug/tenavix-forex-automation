@@ -15,6 +15,7 @@ import 'package:tenavix_server/src/database/postgres_user_repository.dart';
 import 'package:tenavix_server/src/database/postgres_account_repository.dart';
 import 'package:tenavix_server/src/database/postgres_audit_repository.dart';
 import 'package:tenavix_server/src/database/postgres_profit_share_repository.dart';
+import 'package:tenavix_server/src/payments/mtn_momo_client.dart';
 
 /// Local development HTTP entrypoint with CORS for the tenavix_web client.
 Future<void> main(List<String> args) async {
@@ -69,6 +70,7 @@ Future<void> main(List<String> args) async {
     tokenService: tokenService,
     users: userRepo,
     profitShare: profitShareRepo,
+    mtnMomo: MtnMomoClient.fromEnvironment(),
   );
 
   final handler = const Pipeline()
