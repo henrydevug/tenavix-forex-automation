@@ -1932,7 +1932,7 @@ class PostgresProfitShareRepository {
     }
   }
 
-  Future<Map<String, String>?> getMtnPaymentDetails(String paymentId) async {
+  Future<Map<String, String>?> getMtnPaymentDetails({required String paymentId, required String userId}) async {
     final conn = await pool.connection;
     final result = await conn.execute(
       Sql.named(
@@ -1941,7 +1941,7 @@ class PostgresProfitShareRepository {
         "WHERE id = @payment_id::uuid AND provider = 'mtn_momo_ug' "
         "AND channel = 'mobile_money'",
       ),
-      parameters: {'payment_id': paymentId},
+      parameters: {'payment_id': paymentId, 'user_id': userId},
     );
     if (result.isEmpty) return null;
     final r = result.first;
@@ -2133,6 +2133,66 @@ class PostgresProfitShareRepository {
         'issuedAt': (receiptRow[1] as DateTime).toUtc().toIso8601String(),
         'idempotentReplay': false,
       };
+    });
+  }
+
+
+
+  Future<void> markMtnPaymentFailedFromStatus({
+    required String paymentId,
+    required String referenceId,
+    required Map<String, dynamic> providerStatus,
+  }) async {
+    if (providerStatus['status']?.toString().toUpperCase() != 'FAILED') {
+      throw StateError('MTN has not reported a failed payment.');
+    }
+    final conn = await pool.connection;
+    await conn.runTx((tx) async {
+      final rows = await tx.execute(
+        Sql.named(
+          "SELECT amount::text, currency, provider_reference FROM profit_share_payments "
+          "WHERE id = @payment_id::uuid AND provider = 'mtn_momo_ug' "
+          "AND channel = 'mobile_money' AND status = 'pending' FOR UPDATE",
+        ),
+        parameters: {'payment_id': paymentId},
+      );
+      if (rows.isEmpty) return;
+      final p = rows.first;
+      if (p[2]?.toString() != referenceId ||
+          providerStatus['externalId']?.toString() != paymentId ||
+          providerStatus['currency']?.toString() != p[1].toString().trim()) {
+        throw StateError('MTN failure status does not match this payment.');
+      }
+      final matches = await tx.execute(
+        Sql.named('SELECT (@actual::numeric = @expected::numeric)'),
+        parameters: {
+          'actual': providerStatus['amount']?.toString() ?? '',
+          'expected': p[0].toString(),
+        },
+      );
+      if (matches.first[0] != true) {
+        throw StateError('MTN failure amount does not match this payment.');
+      }
+      await tx.execute(
+        Sql.named(
+          "UPDATE profit_share_payments SET status = 'failed' "
+          "WHERE id = @payment_id::uuid AND status = 'pending'",
+        ),
+        parameters: {'payment_id': paymentId},
+      );
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO payment_provider_events '
+          '(provider, provider_event_id, event_type, payload, verification_method, verified_at, processed_at, processing_status) '
+          "VALUES ('mtn_momo_ug', @event_id, 'payment.status.failed', @payload::jsonb, "
+          "'status_api', NOW(), NOW(), 'processed') "
+          'ON CONFLICT (provider, provider_event_id) DO NOTHING',
+        ),
+        parameters: {
+          'event_id': '$referenceId:FAILED',
+          'payload': jsonEncode(providerStatus),
+        },
+      );
     });
   }
 
