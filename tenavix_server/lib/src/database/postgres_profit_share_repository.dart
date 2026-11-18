@@ -263,7 +263,6 @@ class PostgresProfitShareRepository {
       };
     });
   }
-}
 
   /// Builds a draft monthly statement from accrued, unbilled fees.
   ///
@@ -397,23 +396,6 @@ class PostgresProfitShareRepository {
           },
         );
 
-        await tx.execute(
-          Sql.named(
-            'UPDATE profit_share_statements s SET '
-            'eligible_profit = COALESCE(items.eligible_profit, 0), '
-            'fee_amount = COALESCE(items.fee_amount, 0) '
-            'FROM ('
-            ' SELECT statement_id, SUM(eligible_profit) AS eligible_profit, '
-            ' SUM(fee_amount) AS fee_amount '
-            ' FROM profit_share_statement_items '
-            ' WHERE statement_id = @statement_id::uuid '
-            ' GROUP BY statement_id'
-            ') items '
-            'WHERE s.id = @statement_id::uuid',
-          ),
-          parameters: {'statement_id': statementId},
-        );
-
         // An empty-fee month is represented by a zero-value statement for
         // auditability. It will not produce an invoice.
         await tx.execute(
@@ -459,4 +441,4 @@ class PostgresProfitShareRepository {
       };
     });
   }
-
+}
