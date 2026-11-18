@@ -264,3 +264,199 @@ class PostgresProfitShareRepository {
     });
   }
 }
+
+  /// Builds a draft monthly statement from accrued, unbilled fees.
+  ///
+  /// This operation is intentionally gated by an explicit reconciliation
+  /// assertion from the caller. It does not issue an invoice, mark accruals
+  /// invoiced, or collect money. The caller must only pass true after the
+  /// broker's complete closed-deal history for the period has been reconciled.
+  ///
+  /// Repeated calls for the same account and period return the existing
+  /// statement without adding duplicate items.
+  Future<Map<String, Object?>> generateMonthlyStatement({
+    required String tradingAccountId,
+    required DateTime periodStart,
+    required DateTime periodEnd,
+    required bool brokerHistoryReconciled,
+  }) async {
+    if (!brokerHistoryReconciled) {
+      throw StateError(
+        'Broker history must be reconciled before generating a statement.',
+      );
+    }
+    final start = DateTime.utc(
+      periodStart.year,
+      periodStart.month,
+      periodStart.day,
+    );
+    final end = DateTime.utc(
+      periodEnd.year,
+      periodEnd.month,
+      periodEnd.day,
+    );
+    if (!end.isAfter(start)) {
+      throw ArgumentError('periodEnd must be after periodStart.');
+    }
+    if (start.day != 1 ||
+        end.day != 1 ||
+        (end.year == start.year && end.month != start.month + 1) ||
+        (end.year == start.year + 1 &&
+            !(start.month == 12 && end.month == 1)) ||
+        end.difference(start).inDays < 28 ||
+        end.difference(start).inDays > 31) {
+      throw ArgumentError(
+        'Statements must cover one complete calendar month.',
+      );
+    }
+
+    final conn = await pool.connection;
+    return conn.runTx((tx) async {
+      // Lock the account to serialize statement generation with other
+      // account-level financial operations.
+      final accountResult = await tx.execute(
+        Sql.named(
+          'SELECT currency, status FROM trading_accounts '
+          'WHERE id = @account_id::uuid FOR UPDATE',
+        ),
+        parameters: {'account_id': tradingAccountId},
+      );
+      if (accountResult.isEmpty ||
+          accountResult.first[1]?.toString() != 'active') {
+        throw StateError('Trading account not found or inactive.');
+      }
+      final currency = accountResult.first[0]?.toString().trim();
+      if (currency == null || !RegExp(r'^[A-Z]{3}$').hasMatch(currency)) {
+        throw StateError('Trading account has no valid ISO currency.');
+      }
+
+      // Idempotency: a statement is unique for account + calendar period.
+      final inserted = await tx.execute(
+        Sql.named(
+          'INSERT INTO profit_share_statements '
+          '(trading_account_id, period_start, period_end, currency, status) '
+          'VALUES (@account_id::uuid, @period_start::date, @period_end::date, '
+          '@currency, \'draft\') '
+          'ON CONFLICT (trading_account_id, period_start, period_end) '
+          'DO NOTHING RETURNING id',
+        ),
+        parameters: {
+          'account_id': tradingAccountId,
+          'period_start': start,
+          'period_end': end,
+          'currency': currency,
+        },
+      );
+
+      final statementResult = await tx.execute(
+        Sql.named(
+          'SELECT id, status, currency, eligible_profit, fee_amount '
+          'FROM profit_share_statements '
+          'WHERE trading_account_id = @account_id::uuid '
+          'AND period_start = @period_start::date '
+          'AND period_end = @period_end::date '
+          'FOR UPDATE',
+        ),
+        parameters: {
+          'account_id': tradingAccountId,
+          'period_start': start,
+          'period_end': end,
+        },
+      );
+      if (statementResult.isEmpty) {
+        throw StateError('Unable to create or retrieve monthly statement.');
+      }
+      final statement = statementResult.first;
+      final statementId = statement[0].toString();
+
+      // Only a newly created draft is populated. Existing statements are
+      // immutable through this method; corrections require an adjustment flow.
+      if (inserted.isNotEmpty) {
+        await tx.execute(
+          Sql.named(
+            'INSERT INTO profit_share_statement_items '
+            '(statement_id, accrual_id, eligible_profit, fee_amount, currency) '
+            'SELECT @statement_id::uuid, a.id, a.eligible_profit, '
+            'a.fee_amount, a.currency '
+            'FROM profit_share_accruals a '
+            'JOIN realized_trade_deals d ON d.id = a.deal_id '
+            'WHERE a.trading_account_id = @account_id::uuid '
+            'AND d.deal_time >= @period_start::date '
+            'AND d.deal_time < @period_end::date '
+            "AND a.status = 'accrued' "
+            'AND a.fee_amount > 0 '
+            'AND a.currency = @currency '
+            'ORDER BY d.deal_time, d.broker_deal_id',
+          ),
+          parameters: {
+            'statement_id': statementId,
+            'account_id': tradingAccountId,
+            'period_start': start,
+            'period_end': end,
+            'currency': currency,
+          },
+        );
+
+        await tx.execute(
+          Sql.named(
+            'UPDATE profit_share_statements s SET '
+            'eligible_profit = COALESCE(items.eligible_profit, 0), '
+            'fee_amount = COALESCE(items.fee_amount, 0) '
+            'FROM ('
+            ' SELECT statement_id, SUM(eligible_profit) AS eligible_profit, '
+            ' SUM(fee_amount) AS fee_amount '
+            ' FROM profit_share_statement_items '
+            ' WHERE statement_id = @statement_id::uuid '
+            ' GROUP BY statement_id'
+            ') items '
+            'WHERE s.id = @statement_id::uuid',
+          ),
+          parameters: {'statement_id': statementId},
+        );
+
+        // An empty-fee month is represented by a zero-value statement for
+        // auditability. It will not produce an invoice.
+        await tx.execute(
+          Sql.named(
+            'UPDATE profit_share_statements SET '
+            'eligible_profit = COALESCE(('
+            ' SELECT SUM(eligible_profit) FROM profit_share_statement_items '
+            ' WHERE statement_id = @statement_id::uuid'
+            '), 0), '
+            'fee_amount = COALESCE(('
+            ' SELECT SUM(fee_amount) FROM profit_share_statement_items '
+            ' WHERE statement_id = @statement_id::uuid'
+            '), 0) '
+            'WHERE id = @statement_id::uuid',
+          ),
+          parameters: {'statement_id': statementId},
+        );
+      }
+
+      final refreshed = await tx.execute(
+        Sql.named(
+          'SELECT id, status, currency, eligible_profit, fee_amount '
+          'FROM profit_share_statements WHERE id = @statement_id::uuid',
+        ),
+        parameters: {'statement_id': statementId},
+      );
+      final row = refreshed.first;
+      final itemCount = await tx.execute(
+        Sql.named(
+          'SELECT COUNT(*) FROM profit_share_statement_items '
+          'WHERE statement_id = @statement_id::uuid',
+        ),
+        parameters: {'statement_id': statementId},
+      );
+      return {
+        'statementId': row[0].toString(),
+        'status': row[1].toString(),
+        'currency': row[2].toString().trim(),
+        'eligibleProfit': row[3].toString(),
+        'feeAmount': row[4].toString(),
+        'itemCount': int.parse(itemCount.first[0].toString()),
+        'created': inserted.isNotEmpty,
+      };
+    });
+  }
+
