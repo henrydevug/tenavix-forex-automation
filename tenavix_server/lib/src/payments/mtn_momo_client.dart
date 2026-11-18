@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:http/http.dart' as http;
@@ -25,29 +26,15 @@ class MtnMomoClient {
     String? credentialToken,
     String? subscriptionKey,
   })  : _http = httpClient ?? http.Client(),
-        baseUrl = (baseUrl ?? const String.fromEnvironment('MTN_MOMO_BASE_URL'))
+        baseUrl = (baseUrl ?? Platform.environment['MTN_MOMO_BASE_URL'] ?? 'https://sandbox.momodeveloper.mtn.com')
             .replaceAll(RegExp(r'/+$'), ''),
-        targetEnvironment = targetEnvironment ??
-            const String.fromEnvironment('MTN_MOMO_TARGET_ENVIRONMENT', defaultValue: 'sandbox'),
-        userId = userId ?? const String.fromEnvironment('MTN_MOMO_USER_ID'),
-        credentialToken = credentialToken ??
-            const String.fromEnvironment('MTN_MOMO_CREDENTIAL_TOKEN'),
-        subscriptionKey = subscriptionKey ??
-            const String.fromEnvironment('MTN_MOMO_SUBSCRIPTION_KEY');
+        targetEnvironment = targetEnvironment ?? Platform.environment['MTN_MOMO_TARGET_ENVIRONMENT'] ?? 'sandbox',
+        userId = userId ?? Platform.environment['MTN_MOMO_USER_ID'] ?? '',
+        credentialToken = credentialToken ?? Platform.environment['MTN_MOMO_CREDENTIAL_TOKEN'] ?? '',
+        subscriptionKey = subscriptionKey ?? Platform.environment['MTN_MOMO_SUBSCRIPTION_KEY'] ?? '';
 
-  factory MtnMomoClient.fromEnvironment({http.Client? httpClient}) {
-    return MtnMomoClient(
-      httpClient: httpClient,
-      baseUrl: const String.fromEnvironment(
-        'MTN_MOMO_BASE_URL',
-        defaultValue: 'https://sandbox.momodeveloper.mtn.com',
-      ),
-      targetEnvironment: const String.fromEnvironment(
-        'MTN_MOMO_TARGET_ENVIRONMENT',
-        defaultValue: 'sandbox',
-      ),
-    );
-  }
+  factory MtnMomoClient.fromEnvironment({http.Client? httpClient}) =>
+      MtnMomoClient(httpClient: httpClient);
 
   bool get isConfigured =>
       baseUrl.startsWith('https://') &&
