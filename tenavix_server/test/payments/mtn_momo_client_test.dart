@@ -22,7 +22,8 @@ void main() {
           if (request.url.path == '/collection/token') {
             tokenRequested = true;
             expect(_header(request, 'X-Target-Environment'), 'mtnuganda');
-            expect(_header(request, 'Ocp-Apim-Subscription-Key'), 'subscription');
+            expect(
+                _header(request, 'Ocp-Apim-Subscription-Key'), 'subscription');
             expect(_header(request, 'Authorization'), startsWith('Basic '));
             return http.Response(
               jsonEncode({'access_token': 'test-token', 'expires_in': 3600}),
@@ -30,7 +31,7 @@ void main() {
             );
           }
           expect(request.url.path, '/collection/v1_0/requesttopay');
-          expect(request.headers['X-Target-Environment'], 'mtnuganda');
+          expect(_header(request, 'X-Target-Environment'), 'mtnuganda');
           return http.Response('', 202);
         }),
         baseUrl: 'https://momoapi.momo.africa',
@@ -68,10 +69,13 @@ void main() {
           requestCalls++;
           expect(request.url.path, '/collection/v1_0/requesttopay');
           expect(_header(request, 'Authorization'), 'Bearer test-token');
-          expect(request.headers['X-Target-Environment'], 'mtnuganda');
-          expect(_header(request, 'X-Reference-Id'), matches(
-            RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
-          ));
+          expect(_header(request, 'X-Target-Environment'), 'sandbox');
+          expect(
+              _header(request, 'X-Reference-Id'),
+              matches(
+                RegExp(
+                    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
+              ));
           final body = jsonDecode(request.body) as Map<String, dynamic>;
           expect(body['currency'], 'UGX');
           expect(body['payer']['partyId'], '256770000001');
@@ -98,7 +102,8 @@ void main() {
       client.close();
     });
 
-    test('reads provider status without treating callback data as authority', () async {
+    test('reads provider status without treating callback data as authority',
+        () async {
       final client = MtnMomoClient(
         httpClient: MockClient((request) async {
           if (request.url.path == '/collection/token') {
